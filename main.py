@@ -51,11 +51,12 @@ class User(Base):
 class Room(Base):
     __tablename__ = "rooms"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)      # e.g., Deluxe 101
-    type = Column(String, nullable=False)      # Deluxe, Suite, etc.
-    price = Column(Float, nullable=False)      # per night
+    name = Column(String, nullable=False)
+    type = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
     description = Column(String, default="")
     imageUrl = Column(String, default="")
+    status = Column(String, default="available")  # <-- new field
     bookings = relationship("Booking", back_populates="room")
 
 class Booking(Base):
@@ -89,6 +90,15 @@ class BookingService(Base):
     quantity = Column(Integer, default=1)
     booking = relationship("Booking", back_populates="services")
     service = relationship("Service")
+
+class RoomService(Base):
+    __tablename__ = "room_services"
+    id = Column(Integer, primary_key=True)
+    roomId = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    serviceId = Column(Integer, ForeignKey("services.id"), nullable=False)
+    service = relationship("Service")
+    room = relationship("Room")
+
 
 # ---------- Schemas ----------
 class RoomOut(BaseModel):
@@ -281,6 +291,7 @@ def update_room(
     type: Optional[str] = Form(None),
     price: Optional[float] = Form(None),
     description: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),  # <-- add this
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin)
@@ -293,14 +304,15 @@ def update_room(
     if type: r.type = type
     if price: r.price = price
     if description: r.description = description    
+    if status: r.status = status  # <-- handle status
     if image:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(image.filename)[1]
-        filename = f"{uuid.uuid4().hex}{ext}"  # only uuid.ext
+        filename = f"{uuid.uuid4().hex}{ext}"
         filepath = os.path.join(UPLOADS_DIR, filename)
         with open(filepath, "wb") as f:
             f.write(image.file.read())
-        r.imageUrl = f"/uploads/{filename}"  # ✅ update the room field
+        r.imageUrl = f"/uploads/{filename}"
 
     db.commit()
     db.refresh(r)
@@ -428,6 +440,59 @@ def my_bookings(
         "items": bookings
     }
 
+@app.post("/admin/services", response_model=ServiceOut)
+def create_service(payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    s = Service(name=payload.name, price=payload.price)
+    db.add(s); db.commit(); db.refresh(s)
+    return s
+
+@app.put("/admin/services/{service_id}", response_model=ServiceOut)
+def update_service(service_id: int, payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    s = db.get(Service, service_id)
+    if not s: raise HTTPException(404, "Service not found")
+    s.name = payload.name
+    s.price = payload.price
+    db.commit(); db.refresh(s)
+    return s
+
+@app.delete("/admin/services/{service_id}")
+def delete_service(service_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    s = db.get(Service, service_id)
+    if not s: raise HTTPException(404, "Service not found")
+    db.delete(s); db.commit()
+    return {"ok": True}
+@app.post("/admin/rooms/{room_id}/services")
+def assign_service_to_room(room_id: int, serviceId: int = Form(...), db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    room = db.get(Room, room_id)
+    if not room: raise HTTPException(404, "Room not found")
+    svc = db.get(Service, serviceId)
+    if not svc: raise HTTPException(404, "Service not found")
+    
+    # check if already assigned
+    exists = db.query(RoomService).filter_by(roomId=room_id, serviceId=serviceId).first()
+    if exists:
+        return {"message": "Service already assigned"}
+    
+    rs = RoomService(roomId=room_id, serviceId=serviceId)
+    db.add(rs); db.commit(); db.refresh(rs)
+    return rs
+
+@app.delete("/admin/rooms/{room_id}/services/{service_id}")
+def remove_service_from_room(room_id: int, service_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    rs = db.query(RoomService).filter_by(roomId=room_id, serviceId=service_id).first()
+    if not rs: raise HTTPException(404, "Assignment not found")
+    db.delete(rs); db.commit()
+    return {"ok": True}
+
+@app.get("/rooms/{room_id}/services", response_model=List[ServiceOut])
+def get_services_for_room(room_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    services = (
+        db.query(Service)
+        .join(RoomService, RoomService.serviceId == Service.id)
+        .filter(RoomService.roomId == room_id)
+        .all()
+    )
+    return services
 
 
 @app.get("/services", response_model=List[ServiceOut])
@@ -463,6 +528,10 @@ def startup():
     Base.metadata.create_all(engine)
 
     with SessionLocal() as db:
+        db.execute(text("""
+        ALTER TABLE rooms
+        ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'available';
+    """))
         # Ensure allowed_features exists (users table)
         db.execute(text("""
             ALTER TABLE users 
@@ -499,18 +568,9 @@ def startup():
 
         if not db.query(Room).count():
             db.add_all([
-                Room(name="Deluxe 101", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 201", type="Suite", price=159.0, description="King bed, lounge access"),
-                Room(name="Deluxe 102", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 202", type="Suite", price=159.0, description="King bed, lounge access"),
-                Room(name="Deluxe 103", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 203", type="Suite", price=159.0, description="King bed, lounge access"),
-                Room(name="Deluxe 104", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 204", type="Suite", price=159.0, description="King bed, lounge access"),
-                Room(name="Deluxe 105", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 205", type="Suite", price=159.0, description="King bed, lounge access"),
-                Room(name="Deluxe 106", type="Deluxe", price=89.0, description="City view, queen bed"),
-                Room(name="Suite 206", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 101", type="Deluxe", price=89.0, description="City view, queen bed", status="available"),
+                Room(name="Suite 201", type="Suite", price=159.0, description="King bed, lounge access", status="available"),
+                # ... other rooms
             ])
 
         if not db.query(Service).count():
