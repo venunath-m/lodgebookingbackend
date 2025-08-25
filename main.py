@@ -18,6 +18,7 @@ from passlib.context import CryptContext
 from database import Base, engine, SessionLocal, get_db  
 from fastapi import UploadFile, File
 import uuid
+from fastapi import Form
 # ---------- Config ----------
 load_dotenv()
 
@@ -236,10 +237,10 @@ def list_rooms(current_user: User = Depends(get_current_user), db: Session = Dep
 
 @app.post("/admin/rooms", response_model=RoomOut)
 def create_room(
-    name: str,
-    type: str,
-    price: float,
-    description: Optional[str] = "",
+    name: str = Form(...),
+    type: str = Form(...),
+    price: float = Form(...),
+    description: Optional[str] = Form(""),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin)
@@ -248,7 +249,7 @@ def create_room(
     if image:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(image.filename)[1]
-        filename = f"{uuid.uuid4().hex}{ext}"
+        filename = f"uploads/{uuid.uuid4().hex}{ext}"
         filepath = os.path.join(UPLOADS_DIR, filename)
         with open(filepath, "wb") as f:
             f.write(image.file.read())
@@ -264,10 +265,10 @@ def create_room(
 @app.put("/admin/rooms/{room_id}", response_model=RoomOut)
 def update_room(
     room_id: int,
-    name: Optional[str] = None,
-    type: Optional[str] = None,
-    price: Optional[float] = None,
-    description: Optional[str] = None,
+    name: Optional[str] = Form(None),
+    type: Optional[str] = Form(None),
+    price: Optional[float] = Form(None),
+    description: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin)
@@ -282,7 +283,7 @@ def update_room(
     if image:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(image.filename)[1]
-        filename = f"{uuid.uuid4().hex}{ext}"
+        filename = f"uploads/{uuid.uuid4().hex}{ext}"
         filepath = os.path.join(UPLOADS_DIR, filename)
         with open(filepath, "wb") as f:
             f.write(image.file.read())
