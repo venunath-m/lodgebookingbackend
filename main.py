@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text,Column, Integer, String, Float, Date, ForeignKey, UniqueConstraint
+from sqlalchemy import text,Column, Integer, String, Float, Date, ForeignKey, UniqueConstraint,DateTime
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy import JSON
 from dotenv import load_dotenv
@@ -89,8 +89,11 @@ class BookingService(Base):
     bookingId = Column(Integer, ForeignKey("bookings.id"), nullable=False)
     serviceId = Column(Integer, ForeignKey("services.id"), nullable=False)
     quantity = Column(Integer, default=1)
-    date: date = Column(Date, default=date.today())  # <-- when service is used
-    time: datetime = Column(DateTime, default=datetime.utcnow)  # optional exact time
+
+    # Renamed to match schema
+    service_date = Column(Date, default=date.today)  
+    service_time = Column(DateTime, default=datetime.utcnow)  
+
     booking = relationship("Booking", back_populates="services")
     service = relationship("Service")
 
@@ -141,6 +144,10 @@ class BookingServiceOut(BaseModel):
     quantity: int
     service_date: date
     service_time: datetime
+
+    class Config:
+        orm_mode = True
+
 
 class BookingOut(BaseModel):
     id: int
@@ -579,7 +586,7 @@ def list_services(current_user: User = Depends(get_current_user), db: Session = 
 # ---------- Booking-Service ----------
 
 @app.post("/bookings/{booking_id}/services", response_model=BookingServiceOut)
-def add_service_to_booking(
+def add_service(
     booking_id: int,
     payload: AddServiceIn,
     service_date: Optional[date] = Form(None),
@@ -591,11 +598,6 @@ def add_service_to_booking(
     if not booking or booking.userId != current_user.id:
         raise HTTPException(404, "Booking not found")
     
-    # Validate service exists
-    svc = db.get(Service, payload.serviceId)
-    if not svc:
-        raise HTTPException(404, "Service not found")
-    
     # Validate room-service mapping
     room_service = db.query(RoomService).filter_by(
         roomId=booking.roomId, serviceId=payload.serviceId
@@ -603,35 +605,65 @@ def add_service_to_booking(
     if not room_service:
         raise HTTPException(400, "Service not allowed for this room")
     
-    # Validate service_date within booking
-    s_date = service_date or date.today()
-    if s_date < booking.startDate or s_date > booking.endDate:
-        raise HTTPException(400, "Service date must be within booking period")
-    
-    # Validate duplicate booking service (same date/time)
-    existing_item = (
-        db.query(BookingService)
-        .filter_by(bookingId=booking_id, serviceId=payload.serviceId, service_date=s_date)
-        .first()
-    )
-    if existing_item:
-        # Increment quantity instead of creating new row
-        existing_item.quantity += payload.quantity
-        db.commit()
-        db.refresh(existing_item)
-        return existing_item
-    
+    # ✅ Use consistent names with model
     item = BookingService(
         bookingId=booking_id,
         serviceId=payload.serviceId,
         quantity=payload.quantity,
-        service_date=s_date,
+        service_date=service_date or date.today(),
         service_time=service_time or datetime.utcnow()
     )
     db.add(item)
     db.commit()
     db.refresh(item)
     return item
+@app.put("/bookings/{booking_id}/services/{service_id}", response_model=BookingServiceOut)
+def update_booking_service(
+    booking_id: int,
+    service_id: int,
+    quantity: Optional[int] = Form(None),
+    service_date: Optional[date] = Form(None),
+    service_time: Optional[datetime] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    booking = db.get(Booking, booking_id)
+    if not booking or booking.userId != current_user.id:
+        raise HTTPException(404, "Booking not found")
+    
+    item = db.query(BookingService).filter_by(bookingId=booking_id, serviceId=service_id).first()
+    if not item:
+        raise HTTPException(404, "Service not found in this booking")
+    
+    if quantity is not None:
+        item.quantity = quantity
+    if service_date is not None:
+        item.service_date = service_date
+    if service_time is not None:
+        item.service_time = service_time
+
+    db.commit()
+    db.refresh(item)
+    return item
+@app.delete("/bookings/{booking_id}/services/{service_id}")
+def delete_booking_service(
+    booking_id: int,
+    service_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    booking = db.get(Booking, booking_id)
+    if not booking or booking.userId != current_user.id:
+        raise HTTPException(404, "Booking not found")
+
+    item = db.query(BookingService).filter_by(bookingId=booking_id, serviceId=service_id).first()
+    if not item:
+        raise HTTPException(404, "Service not found in this booking")
+    
+    db.delete(item)
+    db.commit()
+    return {"ok": True, "message": "Service removed from booking"}
+
 
 
 @app.get("/health/db")
