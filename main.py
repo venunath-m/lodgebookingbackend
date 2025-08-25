@@ -133,6 +133,9 @@ class ServiceOut(BaseModel):
     name: str
     price: float
     class Config: orm_mode = True
+class ServiceCreate(BaseModel):
+    name: str
+    price: float    
 
 class AddServiceIn(BaseModel):
     serviceId: int
@@ -453,10 +456,11 @@ def my_bookings(
 # ---------- Service Management ----------
 
 @app.post("/admin/services", response_model=ServiceOut)
-def create_service(payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def create_service(payload: ServiceCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     # Prevent duplicate service names
     if db.query(Service).filter(Service.name == payload.name).first():
         raise HTTPException(400, "Service with this name already exists")
+
     s = Service(name=payload.name, price=payload.price)
     db.add(s)
     db.commit()
@@ -464,19 +468,22 @@ def create_service(payload: ServiceOut, db: Session = Depends(get_db), _: User =
     return s
 
 
+
 @app.put("/admin/services/{service_id}", response_model=ServiceOut)
-def update_service(service_id: int, payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def update_service(service_id: int, payload: ServiceCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     s = db.get(Service, service_id)
-    if not s: 
+    if not s:
         raise HTTPException(404, "Service not found")
-    # Optional: check if name is used by another service
+
     if db.query(Service).filter(Service.name == payload.name, Service.id != service_id).first():
         raise HTTPException(400, "Service with this name already exists")
+
     s.name = payload.name
     s.price = payload.price
     db.commit()
     db.refresh(s)
     return s
+
 
 
 @app.delete("/admin/services/{service_id}")
