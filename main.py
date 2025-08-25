@@ -22,6 +22,8 @@ from fastapi import Form
 from fastapi import Query
 from fastapi.responses import JSONResponse
 from datetime import datetime, date
+from sqlalchemy import Boolean
+from sqlalchemy import func
 # ---------- Config ----------
 load_dotenv()
 
@@ -164,6 +166,94 @@ class BookingOut(BaseModel):
     services: List[BookingServiceOut] = []
     class Config:
         orm_mode = True
+class InvoiceItemIn(BaseModel):
+    description: str
+    quantity: int = 1
+    unitPrice: float
+    serviceId: Optional[int] = None
+
+class InvoiceCreate(BaseModel):
+    bookingId: int
+    items: List[InvoiceItemIn]
+    tax: float = 0.0
+    discount: float = 0.0
+
+class InvoiceUpdate(BaseModel):
+    items: Optional[List[InvoiceItemIn]] = None
+    tax: Optional[float] = None
+    discount: Optional[float] = None
+    reason: str
+
+
+class InvoiceItemOut(BaseModel):
+    id: int
+    description: str
+    quantity: int
+    unitPrice: float
+    subtotal: float
+    class Config:
+        orm_mode = True
+
+class InvoiceIn(BaseModel):
+    bookingId: int
+    tax: float = 0
+    discount: float = 0
+
+class InvoiceOut(BaseModel):
+    id: int
+    bookingId: int
+    totalAmount: float
+    tax: float
+    discount: float
+    finalAmount: float
+    items: List[InvoiceItemOut] = []
+    createdBy: int
+    createdAt: datetime
+    updatedBy: Optional[int] = None
+    updatedAt: Optional[datetime] = None
+    reason: Optional[str] = None
+    class Config:
+        orm_mode = True        
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+    id = Column(Integer, primary_key=True)
+    bookingId = Column(Integer, ForeignKey("bookings.id"), nullable=False)
+    
+    totalAmount = Column(Float, default=0.0)      # sum of room + services
+    tax = Column(Float, default=0.0)
+    discount = Column(Float, default=0.0)
+    finalAmount = Column(Float, default=0.0)
+    
+    createdBy = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updatedBy = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deletedBy = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    reason = Column(String, default="")
+    isDeleted = Column(Boolean, default=False)
+    
+    createdAt = Column(DateTime, default=datetime.utcnow)
+    updatedAt = Column(DateTime, nullable=True)
+    deletedAt = Column(DateTime, nullable=True)
+    
+    items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan")
+    booking = relationship("Booking")
+
+
+class InvoiceItem(Base):
+    __tablename__ = "invoice_items"
+    id = Column(Integer, primary_key=True)
+    invoiceId = Column(Integer, ForeignKey("invoices.id"), nullable=False)
+    description = Column(String, nullable=False)  # Room name or service name
+    quantity = Column(Integer, default=1)
+    unitPrice = Column(Float, default=0.0)
+    subtotal = Column(Float, default=0.0)
+    serviceId = Column(Integer, ForeignKey("services.id"), nullable=True)  # optional
+    
+    invoice = relationship("Invoice", back_populates="items")
+
+
 
 
 # Auth schemas
@@ -454,6 +544,310 @@ def my_bookings(
         "items": bookings
     }
 # ---------- Service Management ----------
+@app.post("/invoices", response_model=dict)
+def create_invoice(payload: InvoiceCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.get(Booking, payload.bookingId)
+    if not booking:
+        raise HTTPException(404, "Booking not found")
+
+    total_amount = 0.0
+    invoice_items = []
+    for i in payload.items:
+        subtotal = i.quantity * i.unitPrice
+        total_amount += subtotal
+        invoice_items.append(InvoiceItem(
+            description=i.description,
+            quantity=i.quantity,
+            unitPrice=i.unitPrice,
+            subtotal=subtotal,
+            serviceId=i.serviceId
+        ))
+
+    final_amount = total_amount + payload.tax - payload.discount
+
+    invoice = Invoice(
+        bookingId=payload.bookingId,
+        totalAmount=total_amount,
+        tax=payload.tax,
+        discount=payload.discount,
+        finalAmount=final_amount,
+        createdBy=current_user.id,
+        items=invoice_items
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    return {"invoiceId": invoice.id, "finalAmount": invoice.finalAmount}
+
+@app.get("/invoices", response_model=List[dict])
+def list_invoices(include_deleted: bool = False, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    query = db.query(Invoice)
+    if not include_deleted:
+        query = query.filter(Invoice.isDeleted == False)
+    invoices = query.order_by(Invoice.createdAt.desc()).all()
+    result = []
+    for inv in invoices:
+        result.append({
+            "invoiceId": inv.id,
+            "bookingId": inv.bookingId,
+            "user": inv.createdBy,
+            "totalAmount": inv.totalAmount,
+            "tax": inv.tax,
+            "discount": inv.discount,
+            "finalAmount": inv.finalAmount,
+            "createdAt": inv.createdAt,
+            "updatedAt": inv.updatedAt,
+            "deletedAt": inv.deletedAt,
+            "reason": inv.reason,
+            "isDeleted": inv.isDeleted,
+            "items": [
+                {
+                    "description": i.description,
+                    "quantity": i.quantity,
+                    "unitPrice": i.unitPrice,
+                    "subtotal": i.subtotal,
+                    "serviceId": i.serviceId
+                }
+                for i in inv.items
+            ]
+        })
+    return result
+
+@app.put("/invoices/{invoice_id}", response_model=dict)
+def update_invoice(invoice_id: int, payload: InvoiceUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice or invoice.isDeleted:
+        raise HTTPException(404, "Invoice not found")
+
+    if not payload.reason:
+        raise HTTPException(400, "Reason is required for edit")
+
+    if payload.items is not None:
+        invoice.items.clear()
+        total_amount = 0.0
+        for i in payload.items:
+            subtotal = i.quantity * i.unitPrice
+            total_amount += subtotal
+            invoice.items.append(InvoiceItem(
+                description=i.description,
+                quantity=i.quantity,
+                unitPrice=i.unitPrice,
+                subtotal=subtotal,
+                serviceId=i.serviceId
+            ))
+        invoice.totalAmount = total_amount
+
+    if payload.tax is not None:
+        invoice.tax = payload.tax
+    if payload.discount is not None:
+        invoice.discount = payload.discount
+
+    invoice.finalAmount = invoice.totalAmount + invoice.tax - invoice.discount
+    invoice.updatedBy = current_user.id
+    invoice.updatedAt = datetime.utcnow()
+    invoice.reason = payload.reason
+
+    db.commit()
+    db.refresh(invoice)
+    return {"invoiceId": invoice.id, "finalAmount": invoice.finalAmount}
+
+@app.delete("/invoices/{invoice_id}")
+def delete_invoice(invoice_id: int, reason: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice or invoice.isDeleted:
+        raise HTTPException(404, "Invoice not found")
+
+    if not reason:
+        raise HTTPException(400, "Reason is required for deletion")
+
+    invoice.isDeleted = True
+    invoice.deletedBy = current_user.id
+    invoice.deletedAt = datetime.utcnow()
+    invoice.reason = reason
+
+    db.commit()
+    return {"ok": True, "invoiceId": invoice.id}
+
+
+
+@app.get("/reports/invoices")
+def invoice_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    include_deleted: bool = Query(False),
+    user_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """
+    Generate invoice report
+    - Filters: from_date, to_date, user_id
+    - Include deleted invoices with flag
+    """
+    query = db.query(Invoice)
+
+    if not include_deleted:
+        query = query.filter(Invoice.isDeleted == False)
+    
+    if from_date:
+        query = query.filter(Invoice.createdAt >= from_date)
+    if to_date:
+        query = query.filter(Invoice.createdAt <= to_date)
+    if user_id:
+        query = query.filter(Invoice.createdBy == user_id)
+    
+    invoices = query.order_by(Invoice.createdAt.desc()).all()
+
+    # Aggregate totals
+    total_amount = sum(inv.totalAmount for inv in invoices)
+    total_tax = sum(inv.tax for inv in invoices)
+    total_discount = sum(inv.discount for inv in invoices)
+    total_final = sum(inv.finalAmount for inv in invoices)
+
+    # Optional: include invoice items per invoice
+    result = []
+    for inv in invoices:
+        items = [
+            {
+                "description": i.description,
+                "quantity": i.quantity,
+                "unitPrice": i.unitPrice,
+                "subtotal": i.subtotal
+            }
+            for i in inv.items
+        ]
+        result.append({
+            "invoice_id": inv.id,
+            "booking_id": inv.bookingId,
+            "totalAmount": inv.totalAmount,
+            "tax": inv.tax,
+            "discount": inv.discount,
+            "finalAmount": inv.finalAmount,
+            "createdBy": inv.createdBy,
+            "createdAt": inv.createdAt,
+            "updatedBy": inv.updatedBy,
+            "updatedAt": inv.updatedAt,
+            "reason": inv.reason,
+            "isDeleted": inv.isDeleted,
+            "items": items
+        })
+
+    return {
+        "count": len(result),
+        "totalAmount": total_amount,
+        "totalTax": total_tax,
+        "totalDiscount": total_discount,
+        "totalFinalAmount": total_final,
+        "invoices": result
+    }
+
+@app.get("/reports/invoices-summary")
+def invoice_summary(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    include_deleted: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """
+    Generate invoice summary report for dashboard
+    Includes totals per room, per user, per service
+    """
+    query = db.query(Invoice)
+    if not include_deleted:
+        query = query.filter(Invoice.isDeleted == False)
+    if from_date:
+        query = query.filter(Invoice.createdAt >= from_date)
+    if to_date:
+        query = query.filter(Invoice.createdAt <= to_date)
+    
+    invoices = query.order_by(Invoice.createdAt.desc()).all()
+
+    # Totals per room
+    room_totals = {}
+    for inv in invoices:
+        room_id = inv.booking.roomId
+        if room_id not in room_totals:
+            room_totals[room_id] = {
+                "roomName": inv.booking.room.name,
+                "totalAmount": 0.0,
+                "totalTax": 0.0,
+                "totalDiscount": 0.0,
+                "finalAmount": 0.0,
+                "invoiceCount": 0
+            }
+        room_totals[room_id]["totalAmount"] += inv.totalAmount
+        room_totals[room_id]["totalTax"] += inv.tax
+        room_totals[room_id]["totalDiscount"] += inv.discount
+        room_totals[room_id]["finalAmount"] += inv.finalAmount
+        room_totals[room_id]["invoiceCount"] += 1
+
+    # Totals per user
+    user_totals = {}
+    for inv in invoices:
+        user_id = inv.createdBy
+        if user_id not in user_totals:
+            user_totals[user_id] = {
+                "userName": db.get(User, user_id).name,
+                "totalAmount": 0.0,
+                "totalTax": 0.0,
+                "totalDiscount": 0.0,
+                "finalAmount": 0.0,
+                "invoiceCount": 0
+            }
+        user_totals[user_id]["totalAmount"] += inv.totalAmount
+        user_totals[user_id]["totalTax"] += inv.tax
+        user_totals[user_id]["totalDiscount"] += inv.discount
+        user_totals[user_id]["finalAmount"] += inv.finalAmount
+        user_totals[user_id]["invoiceCount"] += 1
+
+    # Totals per service
+    service_totals = {}
+    for inv in invoices:
+        for item in inv.items:
+            svc_id = item.serviceId
+            if svc_id not in service_totals:
+                service_totals[svc_id] = {
+                    "serviceName": item.description,
+                    "quantity": 0,
+                    "subtotal": 0.0
+                }
+            service_totals[svc_id]["quantity"] += item.quantity
+            service_totals[svc_id]["subtotal"] += item.subtotal
+
+    return {
+        "totalInvoices": len(invoices),
+        "roomTotals": list(room_totals.values()),
+        "userTotals": list(user_totals.values()),
+        "serviceTotals": list(service_totals.values()),
+        "invoices": [
+            {
+                "invoiceId": inv.id,
+                "bookingId": inv.bookingId,
+                "user": inv.createdBy,
+                "room": inv.booking.room.name,
+                "totalAmount": inv.totalAmount,
+                "tax": inv.tax,
+                "discount": inv.discount,
+                "finalAmount": inv.finalAmount,
+                "createdAt": inv.createdAt,
+                "updatedAt": inv.updatedAt,
+                "reason": inv.reason,
+                "isDeleted": inv.isDeleted,
+                "items": [
+                    {
+                        "description": i.description,
+                        "quantity": i.quantity,
+                        "unitPrice": i.unitPrice,
+                        "subtotal": i.subtotal
+                    }
+                    for i in inv.items
+                ]
+            }
+            for inv in invoices
+        ]
+    }
+
 
 @app.post("/admin/services", response_model=ServiceOut)
 def create_service(payload: ServiceCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
@@ -674,33 +1068,15 @@ def startup():
     Base.metadata.create_all(engine)
 
     with SessionLocal() as db:
-        db.execute(text("""
-        ALTER TABLE rooms
-        ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'available';
-    """))
-        # Ensure allowed_features exists (users table)
-        db.execute(text("""
-            ALTER TABLE users 
-            ADD COLUMN IF NOT EXISTS allowed_features JSON DEFAULT '[]';
-        """))
-
-        # Ensure new booking columns exist
-        db.execute(text("""
-            ALTER TABLE bookings
-            ADD COLUMN IF NOT EXISTS males INT DEFAULT 0;
-        """))
-        db.execute(text("""
-            ALTER TABLE bookings
-            ADD COLUMN IF NOT EXISTS females INT DEFAULT 0;
-        """))
-        db.execute(text("""
-            ALTER TABLE bookings
-            ADD COLUMN IF NOT EXISTS "documentUrl" VARCHAR;
-        """))
-
+        # ---------- Existing table alterations & seeding ----------
+        db.execute(text("""ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'available';"""))
+        db.execute(text("""ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_features JSON DEFAULT '[]';"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS males INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS females INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "documentUrl" VARCHAR;"""))
         db.commit()
 
-        # Seed users/rooms/services
+        # Seed users
         if not db.query(User).count():
             admin = User(
                 email="admin@hotel.com", name="Admin", role="admin",
@@ -712,13 +1088,14 @@ def startup():
             )
             db.add_all([admin, guest])
 
+        # Seed rooms
         if not db.query(Room).count():
             db.add_all([
                 Room(name="Deluxe 101", type="Deluxe", price=89.0, description="City view, queen bed", status="available"),
                 Room(name="Suite 201", type="Suite", price=159.0, description="King bed, lounge access", status="available"),
-                # ... other rooms
             ])
 
+        # Seed services
         if not db.query(Service).count():
             db.add_all([
                 Service(name="Breakfast", price=8.0),
@@ -726,5 +1103,29 @@ def startup():
                 Service(name="Spa", price=35.0),
                 Service(name="Cleaning", price=0.0),
             ])
+        
+        # ---------- Invoice & InvoiceItem table creation ----------
+        Base.metadata.create_all(bind=engine, tables=[Invoice.__table__, InvoiceItem.__table__])
+
+        # Optional: Seed a test invoice
+        if not db.query(Invoice).count() and db.query(Booking).count():
+            booking = db.query(Booking).first()
+            invoice_item = InvoiceItem(
+                description="Deluxe 101 Room",
+                quantity=1,
+                unitPrice=booking.room.price,
+                subtotal=booking.room.price
+            )
+            invoice = Invoice(
+                bookingId=booking.id,
+                totalAmount=booking.room.price,
+                tax=booking.room.price * 0.1,      # 10% tax example
+                discount=0,
+                finalAmount=booking.room.price * 1.1,
+                createdBy=booking.userId,
+                items=[invoice_item]
+            )
+            db.add(invoice)
+
         db.commit()
 
