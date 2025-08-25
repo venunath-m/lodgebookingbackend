@@ -17,6 +17,7 @@ from passlib.context import CryptContext
 # ✅ Import from database.py
 from database import Base, engine, SessionLocal, get_db  
 from fastapi import UploadFile, File
+import uuid
 # ---------- Config ----------
 load_dotenv()
 
@@ -245,11 +246,13 @@ def create_room(
 ):
     image_url = ""
     if image:
-        os.makedirs("uploads", exist_ok=True)
-        filename = f"uploads/{image.filename}"
-        with open(filename, "wb") as f:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = os.path.splitext(image.filename)[1]
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(UPLOADS_DIR, filename)
+        with open(filepath, "wb") as f:
             f.write(image.file.read())
-        image_url = f"/uploads/{image.filename}"  
+        image_url = f"/uploads/{filename}"
     
     r = Room(name=name, type=type, price=price, description=description, imageUrl=image_url)
     db.add(r)
@@ -277,11 +280,13 @@ def update_room(
     if price: r.price = price
     if description: r.description = description
     if image:
-        os.makedirs("uploads", exist_ok=True)
-        filename = f"uploads/{image.filename}"
-        with open(filename, "wb") as f:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = os.path.splitext(image.filename)[1]
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(UPLOADS_DIR, filename)
+        with open(filepath, "wb") as f:
             f.write(image.file.read())
-        r.imageUrl = f"/uploads/{image.filename}"  # ✅ store relative URL
+        image_url = f"/uploads/{filename}"
     
     db.commit()
     db.refresh(r)
