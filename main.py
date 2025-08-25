@@ -141,6 +141,7 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
 os.makedirs("uploads", exist_ok=True)
+UPLOADS_DIR = "uploads"
 # ---------- App ----------
 app = FastAPI(title="Lodge Booking API (Secure)")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -184,6 +185,20 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return user
+@app.get("/uploads/files")
+def get_uploaded_files():
+    if not os.path.exists(UPLOADS_DIR):
+        return {"files": []}
+
+    # Only include image files
+    images = [
+        f for f in os.listdir(UPLOADS_DIR)
+        if os.path.isfile(os.path.join(UPLOADS_DIR, f)) and f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
+    ]
+    # Optional: add full URL
+    base_url = "https://lodgebookingbackend.onrender.com/uploads"  # replace with your actual URL
+    images = [f"{base_url}/{f}" for f in images]
+    return {"files": images}
 
 # ---------- Auth Endpoints ----------
 @app.post("/auth/register", status_code=201)
