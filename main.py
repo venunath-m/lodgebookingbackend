@@ -140,7 +140,7 @@ class RegisterIn(BaseModel):
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-
+os.makedirs("uploads", exist_ok=True)
 # ---------- App ----------
 app = FastAPI(title="Lodge Booking API (Secure)")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
