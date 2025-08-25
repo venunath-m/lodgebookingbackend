@@ -354,6 +354,59 @@ def create_booking(
     db.refresh(booking)
     return booking
 
+@app.put("/bookings/{booking_id}", response_model=BookingOut)
+def update_booking(
+    booking_id: int,
+    roomId: Optional[int] = Form(None),
+    startDate: Optional[date] = Form(None),
+    endDate: Optional[date] = Form(None),
+    males: Optional[int] = Form(None),
+    females: Optional[int] = Form(None),
+    document: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    booking = db.get(Booking, booking_id)
+    if not booking or booking.userId != current_user.id:
+        raise HTTPException(404, "Booking not found")
+
+    if roomId:
+        room = db.get(Room, roomId)
+        if not room:
+            raise HTTPException(404, "Room not found")
+        booking.roomId = roomId
+    if startDate: booking.startDate = startDate
+    if endDate: booking.endDate = endDate
+    if males is not None: booking.males = males
+    if females is not None: booking.females = females
+
+    if document:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = os.path.splitext(document.filename)[1]
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(UPLOADS_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(document.file.read())
+        booking.documentUrl = f"/uploads/{filename}"
+
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+@app.post("/bookings/{booking_id}/cancel", response_model=BookingOut)
+def cancel_booking(
+    booking_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    booking = db.get(Booking, booking_id)
+    if not booking or booking.userId != current_user.id:
+        raise HTTPException(404, "Booking not found")
+
+    booking.status = "cancelled"
+    db.commit()
+    db.refresh(booking)
+    return booking
 
 @app.get("/bookings/me")
 def my_bookings(
