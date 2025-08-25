@@ -21,6 +21,7 @@ import uuid
 from fastapi import Form
 from fastapi import Query
 from fastapi.responses import JSONResponse
+from datetime import datetime, date
 # ---------- Config ----------
 load_dotenv()
 
@@ -88,6 +89,8 @@ class BookingService(Base):
     bookingId = Column(Integer, ForeignKey("bookings.id"), nullable=False)
     serviceId = Column(Integer, ForeignKey("services.id"), nullable=False)
     quantity = Column(Integer, default=1)
+    date: date = Column(Date, default=date.today())  # <-- when service is used
+    time: datetime = Column(DateTime, default=datetime.utcnow)  # optional exact time
     booking = relationship("Booking", back_populates="services")
     service = relationship("Service")
 
@@ -136,7 +139,8 @@ class BookingServiceOut(BaseModel):
     id: int
     service: ServiceOut
     quantity: int
-    class Config: orm_mode = True
+    service_date: date
+    service_time: datetime
 
 class BookingOut(BaseModel):
     id: int
@@ -455,34 +459,106 @@ def update_service(service_id: int, payload: ServiceOut, db: Session = Depends(g
     db.commit(); db.refresh(s)
     return s
 
+# ---------- Service Management ----------
+
+@app.post("/admin/services", response_model=ServiceOut)
+def create_service(payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    # Prevent duplicate service names
+    if db.query(Service).filter(Service.name == payload.name).first():
+        raise HTTPException(400, "Service with this name already exists")
+    s = Service(name=payload.name, price=payload.price)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@app.put("/admin/services/{service_id}", response_model=ServiceOut)
+def update_service(service_id: int, payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    s = db.get(Service, service_id)
+    if not s: 
+        raise HTTPException(404, "Service not found")
+    # Optional: check if name is used by another service
+    if db.query(Service).filter(Service.name == payload.name, Service.id != service_id).first():
+        raise HTTPException(400, "Service with this name already exists")
+    s.name = payload.name
+    s.price = payload.price
+    db.commit()
+    db.refresh(s)
+    return s
+
+
 @app.delete("/admin/services/{service_id}")
 def delete_service(service_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     s = db.get(Service, service_id)
-    if not s: raise HTTPException(404, "Service not found")
-    db.delete(s); db.commit()
-    return {"ok": True}
-@app.post("/admin/rooms/{room_id}/services")
-def assign_service_to_room(room_id: int, serviceId: int = Form(...), db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    room = db.get(Room, room_id)
-    if not room: raise HTTPException(404, "Room not found")
-    svc = db.get(Service, serviceId)
-    if not svc: raise HTTPException(404, "Service not found")
+    if not s: 
+        raise HTTPException(404, "Service not found")
     
-    # check if already assigned
+    # Check for linked room assignments or bookings
+    linked_rooms = db.query(RoomService).filter_by(serviceId=service_id).count()
+    linked_bookings = db.query(BookingService).filter_by(serviceId=service_id).count()
+    if linked_rooms > 0 or linked_bookings > 0:
+        raise HTTPException(400, "Cannot delete service: assigned to rooms or bookings exist")
+    
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------- Room-Service Assignment ----------
+
+@app.post("/admin/rooms/{room_id}/services")
+def assign_service_to_room(
+    room_id: int, 
+    serviceId: int = Form(...), 
+    db: Session = Depends(get_db), 
+    _: User = Depends(require_admin)
+):
+    room = db.get(Room, room_id)
+    if not room: 
+        raise HTTPException(404, "Room not found")
+    
+    svc = db.get(Service, serviceId)
+    if not svc: 
+        raise HTTPException(404, "Service not found")
+    
+    # Check if already assigned
     exists = db.query(RoomService).filter_by(roomId=room_id, serviceId=serviceId).first()
     if exists:
         return {"message": "Service already assigned"}
     
     rs = RoomService(roomId=room_id, serviceId=serviceId)
-    db.add(rs); db.commit(); db.refresh(rs)
+    db.add(rs)
+    db.commit()
+    db.refresh(rs)
     return rs
 
+
 @app.delete("/admin/rooms/{room_id}/services/{service_id}")
-def remove_service_from_room(room_id: int, service_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def remove_service_from_room(
+    room_id: int, 
+    service_id: int, 
+    db: Session = Depends(get_db), 
+    _: User = Depends(require_admin)
+):
     rs = db.query(RoomService).filter_by(roomId=room_id, serviceId=service_id).first()
-    if not rs: raise HTTPException(404, "Assignment not found")
-    db.delete(rs); db.commit()
+    if not rs: 
+        raise HTTPException(404, "Assignment not found")
+    
+    # Optional: prevent removal if bookings exist
+    active_bookings = (
+        db.query(BookingService)
+        .join(Booking, Booking.id == BookingService.bookingId)
+        .filter(Booking.roomId == room_id, BookingService.serviceId == service_id)
+        .count()
+    )
+    if active_bookings > 0:
+        raise HTTPException(400, "Cannot remove service: bookings already exist for this room/service")
+    
+    db.delete(rs)
+    db.commit()
     return {"ok": True}
+
 
 @app.get("/rooms/{room_id}/services", response_model=List[ServiceOut])
 def get_services_for_room(room_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -499,15 +575,62 @@ def get_services_for_room(room_id: int, db: Session = Depends(get_db), current_u
 def list_services(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(Service).all()
 
+
+# ---------- Booking-Service ----------
+
 @app.post("/bookings/{booking_id}/services", response_model=BookingServiceOut)
-def add_service(booking_id: int, payload: AddServiceIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_service_to_booking(
+    booking_id: int,
+    payload: AddServiceIn,
+    service_date: Optional[date] = Form(None),
+    service_time: Optional[datetime] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     booking = db.get(Booking, booking_id)
     if not booking or booking.userId != current_user.id:
         raise HTTPException(404, "Booking not found")
+    
+    # Validate service exists
     svc = db.get(Service, payload.serviceId)
-    if not svc: raise HTTPException(404, "Service not found")
-    item = BookingService(bookingId=booking_id, serviceId=payload.serviceId, quantity=payload.quantity)
-    db.add(item); db.commit(); db.refresh(item)
+    if not svc:
+        raise HTTPException(404, "Service not found")
+    
+    # Validate room-service mapping
+    room_service = db.query(RoomService).filter_by(
+        roomId=booking.roomId, serviceId=payload.serviceId
+    ).first()
+    if not room_service:
+        raise HTTPException(400, "Service not allowed for this room")
+    
+    # Validate service_date within booking
+    s_date = service_date or date.today()
+    if s_date < booking.startDate or s_date > booking.endDate:
+        raise HTTPException(400, "Service date must be within booking period")
+    
+    # Validate duplicate booking service (same date/time)
+    existing_item = (
+        db.query(BookingService)
+        .filter_by(bookingId=booking_id, serviceId=payload.serviceId, service_date=s_date)
+        .first()
+    )
+    if existing_item:
+        # Increment quantity instead of creating new row
+        existing_item.quantity += payload.quantity
+        db.commit()
+        db.refresh(existing_item)
+        return existing_item
+    
+    item = BookingService(
+        bookingId=booking_id,
+        serviceId=payload.serviceId,
+        quantity=payload.quantity,
+        service_date=s_date,
+        service_time=service_time or datetime.utcnow()
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
     return item
 
 
