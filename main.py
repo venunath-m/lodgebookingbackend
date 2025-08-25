@@ -450,22 +450,6 @@ def my_bookings(
     return {
         "items": bookings
     }
-
-@app.post("/admin/services", response_model=ServiceOut)
-def create_service(payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    s = Service(name=payload.name, price=payload.price)
-    db.add(s); db.commit(); db.refresh(s)
-    return s
-
-@app.put("/admin/services/{service_id}", response_model=ServiceOut)
-def update_service(service_id: int, payload: ServiceOut, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    s = db.get(Service, service_id)
-    if not s: raise HTTPException(404, "Service not found")
-    s.name = payload.name
-    s.price = payload.price
-    db.commit(); db.refresh(s)
-    return s
-
 # ---------- Service Management ----------
 
 @app.post("/admin/services", response_model=ServiceOut)
