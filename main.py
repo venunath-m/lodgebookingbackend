@@ -149,7 +149,7 @@ app = FastAPI(title="Lodge Booking API (Secure)")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOW_ORIGINS,  # exact URLs only
+    allow_origins=["http://localhost:5173"],  # exact URLs only
     allow_credentials=True,       # needed for Authorization header
     allow_methods=["*"],
     allow_headers=["*"],
