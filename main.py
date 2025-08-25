@@ -19,6 +19,8 @@ from database import Base, engine, SessionLocal, get_db
 from fastapi import UploadFile, File
 import uuid
 from fastapi import Form
+from fastapi import Query
+from fastapi.responses import JSONResponse
 # ---------- Config ----------
 load_dotenv()
 
@@ -63,11 +65,15 @@ class Booking(Base):
     roomId = Column(Integer, ForeignKey("rooms.id"), nullable=False)
     startDate = Column(Date, nullable=False)
     endDate = Column(Date, nullable=False)
+    males = Column(Integer, default=0)
+    females = Column(Integer, default=0)
+    documentUrl = Column(String, nullable=True)
     status = Column(String, default="confirmed")  # confirmed|cancelled
     user = relationship("User", back_populates="bookings")
     room = relationship("Room", back_populates="bookings")
     services = relationship("BookingService", back_populates="booking", cascade="all, delete-orphan")
     __table_args__ = (UniqueConstraint("roomId", "startDate", "endDate", name="uq_room_dates"),)
+
 
 class Service(Base):
     __tablename__ = "services"
@@ -128,8 +134,13 @@ class BookingOut(BaseModel):
     startDate: date
     endDate: date
     status: str
+    males: int
+    females: int
+    documentUrl: Optional[str] = None
     services: List[BookingServiceOut] = []
-    class Config: orm_mode = True
+    class Config:
+        orm_mode = True
+
 
 # Auth schemas
 class RegisterIn(BaseModel):
@@ -304,16 +315,78 @@ def delete_room(room_id: int, db: Session = Depends(get_db), _: User = Depends(r
     return {"ok": True}
 
 @app.post("/bookings", response_model=BookingOut)
-def create_booking(payload: BookingCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    room = db.get(Room, payload.roomId)
-    if not room: raise HTTPException(404, "Room not found")
-    b = Booking(userId=current_user.id, roomId=payload.roomId, startDate=payload.startDate, endDate=payload.endDate)
-    db.add(b); db.commit(); db.refresh(b)
-    return b
+def create_booking(
+    roomId: int = Form(...),
+    startDate: date = Form(...),
+    endDate: date = Form(...),
+    males: int = Form(0),
+    females: int = Form(0),
+    document: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = db.get(Room, roomId)
+    if not room:
+        raise HTTPException(404, "Room not found")
 
-@app.get("/bookings/me", response_model=List[BookingOut])
-def my_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.query(Booking).filter(Booking.userId == current_user.id).all()
+    # handle file upload
+    document_url = None
+    if document:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = os.path.splitext(document.filename)[1]
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(UPLOADS_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(document.file.read())
+        document_url = f"/uploads/{filename}"
+
+    booking = Booking(
+        userId=current_user.id,
+        roomId=roomId,
+        startDate=startDate,
+        endDate=endDate,
+        males=males,
+        females=females,
+        documentUrl=document_url,
+    )
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+@app.get("/bookings/me")
+def my_bookings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+):
+    q = db.query(Booking).filter(Booking.userId == current_user.id)
+
+    if from_date:
+        q = q.filter(Booking.startDate >= from_date)
+    if to_date:
+        q = q.filter(Booking.endDate <= to_date)
+
+    total = q.count()
+    bookings = (
+        q.order_by(Booking.startDate.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": (total + per_page - 1) // per_page,
+        "items": bookings,
+    }
+
 
 @app.get("/services", response_model=List[ServiceOut])
 def list_services(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -348,11 +421,26 @@ def startup():
     Base.metadata.create_all(engine)
 
     with SessionLocal() as db:
-        # Ensure allowed_features exists (PostgreSQL example)
+        # Ensure allowed_features exists (users table)
         db.execute(text("""
             ALTER TABLE users 
             ADD COLUMN IF NOT EXISTS allowed_features JSON DEFAULT '[]';
         """))
+
+        # Ensure new booking columns exist
+        db.execute(text("""
+            ALTER TABLE bookings
+            ADD COLUMN IF NOT EXISTS males INT DEFAULT 0;
+        """))
+        db.execute(text("""
+            ALTER TABLE bookings
+            ADD COLUMN IF NOT EXISTS females INT DEFAULT 0;
+        """))
+        db.execute(text("""
+            ALTER TABLE bookings
+            ADD COLUMN IF NOT EXISTS "documentUrl" VARCHAR;
+        """))
+
         db.commit()
 
         # Seed users/rooms/services
@@ -366,6 +454,7 @@ def startup():
                 password_hash=hash_password("guest123")
             )
             db.add_all([admin, guest])
+
         if not db.query(Room).count():
             db.add_all([
                 Room(name="Deluxe 101", type="Deluxe", price=89.0, description="City view, queen bed"),
@@ -381,6 +470,7 @@ def startup():
                 Room(name="Deluxe 106", type="Deluxe", price=89.0, description="City view, queen bed"),
                 Room(name="Suite 206", type="Suite", price=159.0, description="King bed, lounge access"),
             ])
+
         if not db.query(Service).count():
             db.add_all([
                 Service(name="Breakfast", price=8.0),
@@ -389,3 +479,4 @@ def startup():
                 Service(name="Cleaning", price=0.0),
             ])
         db.commit()
+
