@@ -249,11 +249,12 @@ def create_room(
     if image:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(image.filename)[1]
-        filename = f"uploads/{uuid.uuid4().hex}{ext}"
+        filename = f"{uuid.uuid4().hex}{ext}"  # only uuid.ext
         filepath = os.path.join(UPLOADS_DIR, filename)
         with open(filepath, "wb") as f:
             f.write(image.file.read())
         image_url = f"/uploads/{filename}"
+
     
     r = Room(name=name, type=type, price=price, description=description, imageUrl=image_url)
     db.add(r)
@@ -274,21 +275,22 @@ def update_room(
     _: User = Depends(require_admin)
 ):
     r = db.get(Room, room_id)
-    if not r: raise HTTPException(404, "Room not found")
+    if not r: 
+        raise HTTPException(404, "Room not found")
     
     if name: r.name = name
     if type: r.type = type
     if price: r.price = price
-    if description: r.description = description
+    if description: r.description = description    
     if image:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(image.filename)[1]
-        filename = f"uploads/{uuid.uuid4().hex}{ext}"
+        filename = f"{uuid.uuid4().hex}{ext}"  # only uuid.ext
         filepath = os.path.join(UPLOADS_DIR, filename)
         with open(filepath, "wb") as f:
             f.write(image.file.read())
-        image_url = f"/uploads/{filename}"
-    
+        r.imageUrl = f"/uploads/{filename}"  # ✅ update the room field
+
     db.commit()
     db.refresh(r)
     return r
