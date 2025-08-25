@@ -9,14 +9,14 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text,Column, Integer, String, Float, Date, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship, Session
-
+from sqlalchemy import JSON
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 # ✅ Import from database.py
 from database import Base, engine, SessionLocal, get_db  
-
+from fastapi import UploadFile, File
 # ---------- Config ----------
 load_dotenv()
 
@@ -31,6 +31,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 logging.basicConfig(level=logging.INFO)
+from fastapi.staticfiles import StaticFiles
 
 # ---------- Models ----------
 class User(Base):
@@ -40,6 +41,7 @@ class User(Base):
     name = Column(String, nullable=False)
     role = Column(String, default="user")  # user | admin
     password_hash = Column(String, nullable=False)
+    allowed_features = Column(JSON, default=[])
     bookings = relationship("Booking", back_populates="user")
 
 class Room(Base):
@@ -132,6 +134,8 @@ class RegisterIn(BaseModel):
     email: EmailStr
     name: str
     password: str
+    role: Optional[str] = "user"
+    allowed_features: Optional[List[str]] = [] 
 
 class TokenOut(BaseModel):
     access_token: str
@@ -139,7 +143,7 @@ class TokenOut(BaseModel):
 
 # ---------- App ----------
 app = FastAPI(title="Lodge Booking API (Secure)")
-
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOW_ORIGINS,
@@ -186,9 +190,19 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 def register(payload: RegisterIn, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(400, "Email already registered")
-    u = User(email=payload.email, name=payload.name, role="user", password_hash=hash_password(payload.password))
-    db.add(u); db.commit()
+
+    u = User(
+        email=payload.email,
+        name=payload.name,
+        role=payload.role,
+        allowed_features=payload.allowed_features if payload.role == "user" else [],
+        password_hash=hash_password(payload.password)
+    )
+    db.add(u)
+    db.commit()
     return {"message": "Registered successfully"}
+
+
 
 @app.post("/auth/login", response_model=TokenOut)
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -205,18 +219,59 @@ def list_rooms(current_user: User = Depends(get_current_user), db: Session = Dep
     return db.query(Room).all()
 
 @app.post("/admin/rooms", response_model=RoomOut)
-def create_room(room: RoomIn, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    r = Room(**room.dict())
-    db.add(r); db.commit(); db.refresh(r)
+def create_room(
+    name: str,
+    type: str,
+    price: float,
+    description: Optional[str] = "",
+    image: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin)
+):
+    image_url = ""
+    if image:
+        os.makedirs("uploads", exist_ok=True)
+        filename = f"uploads/{image.filename}"
+        with open(filename, "wb") as f:
+            f.write(image.file.read())
+        image_url = f"/uploads/{image.filename}"  
+    
+    r = Room(name=name, type=type, price=price, description=description, imageUrl=image_url)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
     return r
 
+
 @app.put("/admin/rooms/{room_id}", response_model=RoomOut)
-def update_room(room_id: int, room: RoomIn, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def update_room(
+    room_id: int,
+    name: Optional[str] = None,
+    type: Optional[str] = None,
+    price: Optional[float] = None,
+    description: Optional[str] = None,
+    image: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin)
+):
     r = db.get(Room, room_id)
     if not r: raise HTTPException(404, "Room not found")
-    for k, v in room.dict().items(): setattr(r, k, v)
-    db.commit(); db.refresh(r)
+    
+    if name: r.name = name
+    if type: r.type = type
+    if price: r.price = price
+    if description: r.description = description
+    if image:
+        os.makedirs("uploads", exist_ok=True)
+        filename = f"uploads/{image.filename}"
+        with open(filename, "wb") as f:
+            f.write(image.file.read())
+        r.imageUrl = f"/uploads/{image.filename}"  # ✅ store relative URL
+    
+    db.commit()
+    db.refresh(r)
     return r
+
 
 @app.delete("/admin/rooms/{room_id}")
 def delete_room(room_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
