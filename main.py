@@ -323,7 +323,16 @@ def health_check(db: Session = Depends(get_db)):
 def startup():
     logging.info("Creating tables & seeding data...")
     Base.metadata.create_all(engine)
+
     with SessionLocal() as db:
+        # Ensure allowed_features exists (PostgreSQL example)
+        db.execute(text("""
+            ALTER TABLE users 
+            ADD COLUMN IF NOT EXISTS allowed_features JSON DEFAULT '[]';
+        """))
+        db.commit()
+
+        # Seed users/rooms/services
         if not db.query(User).count():
             admin = User(
                 email="admin@hotel.com", name="Admin", role="admin",
@@ -338,6 +347,16 @@ def startup():
             db.add_all([
                 Room(name="Deluxe 101", type="Deluxe", price=89.0, description="City view, queen bed"),
                 Room(name="Suite 201", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 102", type="Deluxe", price=89.0, description="City view, queen bed"),
+                Room(name="Suite 202", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 103", type="Deluxe", price=89.0, description="City view, queen bed"),
+                Room(name="Suite 203", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 104", type="Deluxe", price=89.0, description="City view, queen bed"),
+                Room(name="Suite 204", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 105", type="Deluxe", price=89.0, description="City view, queen bed"),
+                Room(name="Suite 205", type="Suite", price=159.0, description="King bed, lounge access"),
+                Room(name="Deluxe 106", type="Deluxe", price=89.0, description="City view, queen bed"),
+                Room(name="Suite 206", type="Suite", price=159.0, description="King bed, lounge access"),
             ])
         if not db.query(Service).count():
             db.add_all([
