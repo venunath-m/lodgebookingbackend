@@ -412,8 +412,6 @@ def cancel_booking(
 def my_bookings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(10, ge=1, le=100),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
 ):
@@ -424,21 +422,12 @@ def my_bookings(
     if to_date:
         q = q.filter(Booking.endDate <= to_date)
 
-    total = q.count()
-    bookings = (
-        q.order_by(Booking.startDate.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
+    bookings = q.order_by(Booking.startDate.desc()).all()
 
     return {
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": (total + per_page - 1) // per_page,
-        "items": bookings,
+        "items": bookings
     }
+
 
 
 @app.get("/services", response_model=List[ServiceOut])
