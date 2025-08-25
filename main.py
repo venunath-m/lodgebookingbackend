@@ -26,8 +26,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change_me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-_allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
-ALLOW_ORIGINS = _allowed if _allowed else ["*"]
+_allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+ALLOW_ORIGINS = _allowed if _allowed else []
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -149,10 +149,10 @@ app = FastAPI(title="Lodge Booking API (Secure)")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOW_ORIGINS,
+    allow_origins=ALLOW_ORIGINS,  # exact URLs only
+    allow_credentials=True,       # needed for Authorization header
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True
 )
 
 # ---------- Auth helpers ----------
