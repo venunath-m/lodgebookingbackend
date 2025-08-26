@@ -274,8 +274,11 @@ app = FastAPI(title="Lodge Booking API (Secure)")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # exact URLs only
-    allow_credentials=True,       # needed for Authorization header
+    allow_origins=[
+        "http://localhost:5173",  # local dev
+        "https://lodge-booking-frontend.vercel.app"  # production vercel frontend
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
