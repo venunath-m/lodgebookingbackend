@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from datetime import datetime, date
 from sqlalchemy import Boolean
 from sqlalchemy import func
+from accounting.routes import router as accounting_router
 # ---------- Config ----------
 load_dotenv()
 
@@ -853,6 +854,7 @@ def invoice_summary(
     }
 
 
+
 @app.post("/admin/services", response_model=ServiceOut)
 def create_service(payload: ServiceCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     # Prevent duplicate service names
@@ -1053,7 +1055,8 @@ def delete_booking_service(
     db.commit()
     return {"ok": True, "message": "Service removed from booking"}
 
-
+# plug in accounting routes
+app.include_router(accounting_router)
 
 @app.get("/health/db")
 def health_check(db: Session = Depends(get_db)):
