@@ -276,7 +276,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",  # local dev
-        "https://lodge-booking-frontend.vercel.app"  # production vercel frontend
+        "https://lodge-booking-frontend.vercel.app",
+        "https://lodgebookingfrontend.onrender.com"# production vercel frontend
     ],
     allow_credentials=True,
     allow_methods=["*"],
