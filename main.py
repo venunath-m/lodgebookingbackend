@@ -1351,6 +1351,7 @@ def startup():
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
 
         # ✅ Add same fields to invoices table       
+        # ✅ Add same fields to invoices table
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "customerName" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS name VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS mobile VARCHAR;"""))
@@ -1360,11 +1361,11 @@ def startup():
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "checkOutTime" TIME;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "customerGstNo" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "roomNo" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "roomName" VARCHAR;"""))  # 🆕 add this
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
-
         db.commit()
 
         # Seed users
