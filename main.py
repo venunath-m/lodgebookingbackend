@@ -65,18 +65,38 @@ class Room(Base):
 
 class Booking(Base):
     __tablename__ = "bookings"
+
     id = Column(Integer, primary_key=True)
     userId = Column(Integer, ForeignKey("users.id"), nullable=False)
     roomId = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    
+    # Existing fields
     startDate = Column(Date, nullable=False)
     endDate = Column(Date, nullable=False)
     males = Column(Integer, default=0)
     females = Column(Integer, default=0)
     documentUrl = Column(String, nullable=True)
-    status = Column(String, default="confirmed")  # confirmed|cancelled
+    status = Column(String, default="confirmed")
+
+    # ✅ New fields
+    name = Column(String, nullable=True)
+    mobile = Column(String, nullable=True)
+    checkInDate = Column(Date, nullable=True)
+    checkInTime = Column(Time, nullable=True)
+    checkOutDate = Column(Date, nullable=True)
+    checkOutTime = Column(Time, nullable=True)
+    customerGstNo = Column(String, nullable=True)
+    roomNo = Column(String, nullable=True)
+    numberOfDates = Column(Integer, default=0)
+    totalNoPeople = Column(Integer, default=0)
+    bookingSource = Column(String, nullable=True)
+    safe = Column(Boolean, default=False)
+
+    # Relationships
     user = relationship("User", back_populates="bookings")
     room = relationship("Room", back_populates="bookings")
     services = relationship("BookingService", back_populates="booking", cascade="all, delete-orphan")
+
     __table_args__ = (UniqueConstraint("roomId", "startDate", "endDate", name="uq_room_dates"),)
 
 
@@ -157,6 +177,19 @@ class BookingServiceOut(BaseModel):
 
 class BookingOut(BaseModel):
     id: int
+    name: Optional[str] = None
+    mobile: Optional[str] = None
+    checkInDate: Optional[date] = None
+    checkInTime: Optional[time] = None
+    checkOutDate: Optional[date] = None
+    checkOutTime: Optional[time] = None
+    customerGstNo: Optional[str] = None
+    roomNo: Optional[str] = None
+    numberOfDates: Optional[int] = None
+    totalNoPeople: Optional[int] = None
+    bookingSource: Optional[str] = None
+    safe: Optional[bool] = None
+
     room: RoomOut
     startDate: date
     endDate: date
@@ -165,8 +198,10 @@ class BookingOut(BaseModel):
     females: int
     documentUrl: Optional[str] = None
     services: List[BookingServiceOut] = []
+
     class Config:
         orm_mode = True
+
 class InvoiceItemIn(BaseModel):
     description: str
     quantity: int = 1
@@ -222,22 +257,37 @@ class Invoice(Base):
     id = Column(Integer, primary_key=True)
     bookingId = Column(Integer, ForeignKey("bookings.id"), nullable=False)
     
-    totalAmount = Column(Float, default=0.0)      # sum of room + services
+    # Booking snapshot fields for printing
+    customerName = Column(String, nullable=True)
+    mobile = Column(String, nullable=True)
+    roomNo = Column(String, nullable=True)
+    roomName = Column(String, nullable=True)
+    checkInDate = Column(Date, nullable=True)
+    checkInTime = Column(Time, nullable=True)
+    checkOutDate = Column(Date, nullable=True)
+    checkOutTime = Column(Time, nullable=True)
+    bookingSource = Column(String, nullable=True)
+    safe = Column(Boolean, default=False)
+    gstNo = Column(String, nullable=True)
+    numberOfDates = Column(Integer, default=0)
+    totalNoPeople = Column(Integer, default=0)
+
+    totalAmount = Column(Float, default=0.0)
     tax = Column(Float, default=0.0)
     discount = Column(Float, default=0.0)
     finalAmount = Column(Float, default=0.0)
-    
+
     createdBy = Column(Integer, ForeignKey("users.id"), nullable=False)
     updatedBy = Column(Integer, ForeignKey("users.id"), nullable=True)
     deletedBy = Column(Integer, ForeignKey("users.id"), nullable=True)
-    
+
     reason = Column(String, default="")
     isDeleted = Column(Boolean, default=False)
-    
+
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, nullable=True)
     deletedAt = Column(DateTime, nullable=True)
-    
+
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan")
     booking = relationship("Booking")
 
@@ -442,6 +492,18 @@ def create_booking(
     endDate: date = Form(...),
     males: int = Form(0),
     females: int = Form(0),
+    name: Optional[str] = Form(None),
+    mobile: Optional[str] = Form(None),
+    checkInDate: Optional[date] = Form(None),
+    checkInTime: Optional[time] = Form(None),
+    checkOutDate: Optional[date] = Form(None),
+    checkOutTime: Optional[time] = Form(None),
+    customerGstNo: Optional[str] = Form(None),
+    roomNo: Optional[str] = Form(None),
+    numberOfDates: Optional[int] = Form(0),
+    totalNoPeople: Optional[int] = Form(0),
+    bookingSource: Optional[str] = Form(None),
+    safe: Optional[bool] = Form(False),
     document: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -450,7 +512,7 @@ def create_booking(
     if not room:
         raise HTTPException(404, "Room not found")
 
-    # handle file upload
+    # Handle document upload
     document_url = None
     if document:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -469,11 +531,24 @@ def create_booking(
         males=males,
         females=females,
         documentUrl=document_url,
+        name=name,
+        mobile=mobile,
+        checkInDate=checkInDate,
+        checkInTime=checkInTime,
+        checkOutDate=checkOutDate,
+        checkOutTime=checkOutTime,
+        customerGstNo=customerGstNo,
+        roomNo=roomNo,
+        numberOfDates=numberOfDates,
+        totalNoPeople=totalNoPeople,
+        bookingSource=bookingSource,
+        safe=safe
     )
     db.add(booking)
     db.commit()
     db.refresh(booking)
     return booking
+
 
 @app.put("/bookings/{booking_id}", response_model=BookingOut)
 def update_booking(
@@ -483,23 +558,39 @@ def update_booking(
     endDate: Optional[date] = Form(None),
     males: Optional[int] = Form(None),
     females: Optional[int] = Form(None),
+    name: Optional[str] = Form(None),
+    mobile: Optional[str] = Form(None),
+    checkInDate: Optional[date] = Form(None),
+    checkInTime: Optional[str] = Form(None),
+    checkOutDate: Optional[date] = Form(None),
+    checkOutTime: Optional[str] = Form(None),
+    customerGstNo: Optional[str] = Form(None),
+    roomNo: Optional[str] = Form(None),
+    numberOfDates: Optional[int] = Form(None),
+    totalNoPeople: Optional[int] = Form(None),
+    bookingSource: Optional[str] = Form(None),
+    safe: Optional[str] = Form(None),
     document: Optional[UploadFile] = File(None),
-    current_user: User = Depends(get_current_user),
+    current_user: "User" = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     booking = db.get(Booking, booking_id)
     if not booking or booking.userId != current_user.id:
         raise HTTPException(404, "Booking not found")
 
-    if roomId:
-        room = db.get(Room, roomId)
-        if not room:
-            raise HTTPException(404, "Room not found")
-        booking.roomId = roomId
+    # Update fields
+    if roomId: booking.roomId = roomId
     if startDate: booking.startDate = startDate
     if endDate: booking.endDate = endDate
     if males is not None: booking.males = males
     if females is not None: booking.females = females
+
+    for field, value in locals().items():
+        if field in [
+            "name", "mobile", "checkInDate", "checkInTime", "checkOutDate", "checkOutTime",
+            "customerGstNo", "roomNo", "numberOfDates", "totalNoPeople", "bookingSource", "safe"
+        ] and value is not None:
+            setattr(booking, field, value)
 
     if document:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -550,7 +641,11 @@ def my_bookings(
     }
 # ---------- Service Management ----------
 @app.post("/invoices", response_model=dict)
-def create_invoice(payload: InvoiceCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_invoice(
+    payload: InvoiceCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     booking = db.get(Booking, payload.bookingId)
     if not booking:
         raise HTTPException(404, "Booking not found")
@@ -570,6 +665,7 @@ def create_invoice(payload: InvoiceCreate, current_user: User = Depends(get_curr
 
     final_amount = total_amount + payload.tax - payload.discount
 
+    # ✅ Create invoice with snapshot of booking details
     invoice = Invoice(
         bookingId=payload.bookingId,
         totalAmount=total_amount,
@@ -577,49 +673,75 @@ def create_invoice(payload: InvoiceCreate, current_user: User = Depends(get_curr
         discount=payload.discount,
         finalAmount=final_amount,
         createdBy=current_user.id,
-        items=invoice_items
+        items=invoice_items,
+
+        # Snapshot booking details
+        customerName=booking.name,
+        mobile=booking.mobile,
+        roomNo=booking.roomNo,
+        roomName=booking.room.name if booking.room else None,
+        checkInDate=booking.checkInDate,
+        checkInTime=booking.checkInTime,
+        checkOutDate=booking.checkOutDate,
+        checkOutTime=booking.checkOutTime,
+        bookingSource=booking.bookingSource,
+        safe=booking.safe,
+        gstNo=booking.customerGstNo,
+        numberOfDates=booking.numberOfDates,
+        totalNoPeople=booking.totalNoPeople
     )
+
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
-    return {"invoiceId": invoice.id, "finalAmount": invoice.finalAmount}
 
-@app.get("/invoices", response_model=List[dict])
-def list_invoices(include_deleted: bool = False, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    query = db.query(Invoice)
-    if not include_deleted:
-        query = query.filter(Invoice.isDeleted == False)
-    invoices = query.order_by(Invoice.createdAt.desc()).all()
-    result = []
-    for inv in invoices:
-        result.append({
-            "invoiceId": inv.id,
-            "bookingId": inv.bookingId,
-            "user": inv.createdBy,
-            "totalAmount": inv.totalAmount,
-            "tax": inv.tax,
-            "discount": inv.discount,
-            "finalAmount": inv.finalAmount,
-            "createdAt": inv.createdAt,
-            "updatedAt": inv.updatedAt,
-            "deletedAt": inv.deletedAt,
-            "reason": inv.reason,
-            "isDeleted": inv.isDeleted,
-            "items": [
-                {
-                    "description": i.description,
-                    "quantity": i.quantity,
-                    "unitPrice": i.unitPrice,
-                    "subtotal": i.subtotal,
-                    "serviceId": i.serviceId
-                }
-                for i in inv.items
-            ]
-        })
-    return result
+    # ✅ Return full response
+    return {
+        "invoiceId": invoice.id,
+        "bookingId": invoice.bookingId,
+        "user": current_user.id,
+        "totalAmount": invoice.totalAmount,
+        "tax": invoice.tax,
+        "discount": invoice.discount,
+        "finalAmount": invoice.finalAmount,
+        "createdAt": invoice.createdAt,
+        "updatedAt": invoice.updatedAt,
+
+        # Booking snapshot
+        "customerName": invoice.customerName,
+        "mobile": invoice.mobile,
+        "roomNo": invoice.roomNo,
+        "room": invoice.roomName,
+        "checkInDate": invoice.checkInDate,
+        "checkOutDate": invoice.checkOutDate,
+        "checkInTime": invoice.checkInTime,
+        "checkOutTime": invoice.checkOutTime,
+        "bookingSource": invoice.bookingSource,
+        "safe": invoice.safe,
+        "gstNo": invoice.gstNo,
+        "numberOfDates": invoice.numberOfDates,
+        "totalNoPeople": invoice.totalNoPeople,
+
+        # Invoice items
+        "items": [
+            {
+                "description": i.description,
+                "quantity": i.quantity,
+                "unitPrice": i.unitPrice,
+                "subtotal": i.subtotal,
+                "serviceId": i.serviceId
+            } for i in invoice.items
+        ]
+    }
+
 
 @app.put("/invoices/{invoice_id}", response_model=dict)
-def update_invoice(invoice_id: int, payload: InvoiceUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_invoice(
+    invoice_id: int,
+    payload: InvoiceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     invoice = db.get(Invoice, invoice_id)
     if not invoice or invoice.isDeleted:
         raise HTTPException(404, "Invoice not found")
@@ -627,6 +749,7 @@ def update_invoice(invoice_id: int, payload: InvoiceUpdate, current_user: User =
     if not payload.reason:
         raise HTTPException(400, "Reason is required for edit")
 
+    # ✅ Handle item updates
     if payload.items is not None:
         invoice.items.clear()
         total_amount = 0.0
@@ -642,19 +765,129 @@ def update_invoice(invoice_id: int, payload: InvoiceUpdate, current_user: User =
             ))
         invoice.totalAmount = total_amount
 
+    # ✅ Update tax & discount
     if payload.tax is not None:
         invoice.tax = payload.tax
     if payload.discount is not None:
         invoice.discount = payload.discount
 
+    # ✅ Recalculate
     invoice.finalAmount = invoice.totalAmount + invoice.tax - invoice.discount
     invoice.updatedBy = current_user.id
     invoice.updatedAt = datetime.utcnow()
     invoice.reason = payload.reason
 
+    # ✅ Refresh booking snapshot (in case booking details changed)
+    booking = db.get(Booking, invoice.bookingId)
+    if booking:
+        invoice.customerName = booking.name
+        invoice.mobile = booking.mobile
+        invoice.roomNo = booking.roomNo
+        invoice.roomName = booking.room.name if booking.room else None
+        invoice.checkInDate = booking.checkInDate
+        invoice.checkInTime = booking.checkInTime
+        invoice.checkOutDate = booking.checkOutDate
+        invoice.checkOutTime = booking.checkOutTime
+        invoice.bookingSource = booking.bookingSource
+        invoice.safe = booking.safe
+        invoice.gstNo = booking.customerGstNo
+        invoice.numberOfDates = booking.numberOfDates
+        invoice.totalNoPeople = booking.totalNoPeople
+
     db.commit()
     db.refresh(invoice)
-    return {"invoiceId": invoice.id, "finalAmount": invoice.finalAmount}
+
+    # ✅ Return full updated invoice
+    return {
+        "invoiceId": invoice.id,
+        "bookingId": invoice.bookingId,
+        "user": current_user.id,
+        "totalAmount": invoice.totalAmount,
+        "tax": invoice.tax,
+        "discount": invoice.discount,
+        "finalAmount": invoice.finalAmount,
+        "createdAt": invoice.createdAt,
+        "updatedAt": invoice.updatedAt,
+        "reason": invoice.reason,
+        "isDeleted": invoice.isDeleted,
+
+        # Booking snapshot
+        "customerName": invoice.customerName,
+        "mobile": invoice.mobile,
+        "roomNo": invoice.roomNo,
+        "room": invoice.roomName,
+        "checkInDate": invoice.checkInDate,
+        "checkOutDate": invoice.checkOutDate,
+        "checkInTime": invoice.checkInTime,
+        "checkOutTime": invoice.checkOutTime,
+        "bookingSource": invoice.bookingSource,
+        "safe": invoice.safe,
+        "gstNo": invoice.gstNo,
+        "numberOfDates": invoice.numberOfDates,
+        "totalNoPeople": invoice.totalNoPeople,
+
+        # Invoice items
+        "items": [
+            {
+                "description": i.description,
+                "quantity": i.quantity,
+                "unitPrice": i.unitPrice,
+                "subtotal": i.subtotal,
+                "serviceId": i.serviceId
+            } for i in invoice.items
+        ]
+    }
+
+@app.get("/invoices", response_model=List[dict])
+def list_invoices(include_deleted: bool = False, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    query = db.query(Invoice)
+    if not include_deleted:
+        query = query.filter(Invoice.isDeleted == False)
+    invoices = query.order_by(Invoice.createdAt.desc()).all()
+    
+    result = []
+    for inv in invoices:
+        result.append({
+            "invoiceId": inv.id,
+            "bookingId": inv.bookingId,
+            "user": inv.createdBy,
+            "totalAmount": inv.totalAmount,
+            "tax": inv.tax,
+            "discount": inv.discount,
+            "finalAmount": inv.finalAmount,
+            "createdAt": inv.createdAt,
+            "updatedAt": inv.updatedAt,
+            "deletedAt": inv.deletedAt,
+            "reason": inv.reason,
+            "isDeleted": inv.isDeleted,
+
+            # ✅ Extended booking details
+            "customerName": inv.booking.name if inv.booking else None,
+            "mobile": inv.booking.mobile if inv.booking else None,
+            "roomNo": inv.booking.roomNo if inv.booking else None,
+            "checkInDate": inv.booking.checkInDate if inv.booking else None,
+            "checkOutDate": inv.booking.checkOutDate if inv.booking else None,
+            "checkInTime": inv.booking.checkInTime if inv.booking else None,
+            "checkOutTime": inv.booking.checkOutTime if inv.booking else None,
+            "bookingSource": inv.booking.bookingSource if inv.booking else None,
+            "safe": inv.booking.safe if inv.booking else None,
+            "gstNo": inv.booking.customerGstNo if inv.booking else None,
+            "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
+            "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
+            "room": inv.booking.room.name if inv.booking and inv.booking.room else None,
+
+            "items": [
+                {
+                    "description": i.description,
+                    "quantity": i.quantity,
+                    "unitPrice": i.unitPrice,
+                    "subtotal": i.subtotal,
+                    "serviceId": i.serviceId
+                }
+                for i in inv.items
+            ]
+        })
+    return result
 
 @app.delete("/invoices/{invoice_id}")
 def delete_invoice(invoice_id: int, reason: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -757,6 +990,7 @@ def invoice_summary(
     """
     Generate invoice summary report for dashboard
     Includes totals per room, per user, per service
+    + extended booking details for each invoice
     """
     query = db.query(Invoice)
     if not include_deleted:
@@ -771,20 +1005,22 @@ def invoice_summary(
     # Totals per room
     room_totals = {}
     for inv in invoices:
+        if not inv.booking:
+            continue
         room_id = inv.booking.roomId
         if room_id not in room_totals:
             room_totals[room_id] = {
-                "roomName": inv.booking.room.name,
+                "roomName": inv.booking.room.name if inv.booking.room else "Unknown",
                 "totalAmount": 0.0,
                 "totalTax": 0.0,
                 "totalDiscount": 0.0,
                 "finalAmount": 0.0,
                 "invoiceCount": 0
             }
-        room_totals[room_id]["totalAmount"] += inv.totalAmount
-        room_totals[room_id]["totalTax"] += inv.tax
-        room_totals[room_id]["totalDiscount"] += inv.discount
-        room_totals[room_id]["finalAmount"] += inv.finalAmount
+        room_totals[room_id]["totalAmount"] += inv.totalAmount or 0
+        room_totals[room_id]["totalTax"] += inv.tax or 0
+        room_totals[room_id]["totalDiscount"] += inv.discount or 0
+        room_totals[room_id]["finalAmount"] += inv.finalAmount or 0
         room_totals[room_id]["invoiceCount"] += 1
 
     # Totals per user
@@ -792,18 +1028,19 @@ def invoice_summary(
     for inv in invoices:
         user_id = inv.createdBy
         if user_id not in user_totals:
+            user = db.get(User, user_id)
             user_totals[user_id] = {
-                "userName": db.get(User, user_id).name,
+                "userName": user.name if user else "Unknown",
                 "totalAmount": 0.0,
                 "totalTax": 0.0,
                 "totalDiscount": 0.0,
                 "finalAmount": 0.0,
                 "invoiceCount": 0
             }
-        user_totals[user_id]["totalAmount"] += inv.totalAmount
-        user_totals[user_id]["totalTax"] += inv.tax
-        user_totals[user_id]["totalDiscount"] += inv.discount
-        user_totals[user_id]["finalAmount"] += inv.finalAmount
+        user_totals[user_id]["totalAmount"] += inv.totalAmount or 0
+        user_totals[user_id]["totalTax"] += inv.tax or 0
+        user_totals[user_id]["totalDiscount"] += inv.discount or 0
+        user_totals[user_id]["finalAmount"] += inv.finalAmount or 0
         user_totals[user_id]["invoiceCount"] += 1
 
     # Totals per service
@@ -817,9 +1054,10 @@ def invoice_summary(
                     "quantity": 0,
                     "subtotal": 0.0
                 }
-            service_totals[svc_id]["quantity"] += item.quantity
-            service_totals[svc_id]["subtotal"] += item.subtotal
+            service_totals[svc_id]["quantity"] += item.quantity or 0
+            service_totals[svc_id]["subtotal"] += item.subtotal or 0
 
+    # Final response
     return {
         "totalInvoices": len(invoices),
         "roomTotals": list(room_totals.values()),
@@ -830,7 +1068,23 @@ def invoice_summary(
                 "invoiceId": inv.id,
                 "bookingId": inv.bookingId,
                 "user": inv.createdBy,
-                "room": inv.booking.room.name,
+                "room": inv.booking.room.name if inv.booking and inv.booking.room else None,
+
+                # ✅ Extended booking details
+                "customerName": inv.booking.name if inv.booking else None,
+                "mobile": inv.booking.mobile if inv.booking else None,
+                "roomNo": inv.booking.roomNo if inv.booking else None,
+                "checkInDate": inv.booking.checkInDate if inv.booking else None,
+                "checkOutDate": inv.booking.checkOutDate if inv.booking else None,
+                "checkInTime": inv.booking.checkInTime if inv.booking else None,
+                "checkOutTime": inv.booking.checkOutTime if inv.booking else None,
+                "bookingSource": inv.booking.bookingSource if inv.booking else None,
+                "safe": inv.booking.safe if inv.booking else None,
+                "gstNo": inv.booking.customerGstNo if inv.booking else None,
+                "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
+                "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
+
+                # ✅ Invoice details
                 "totalAmount": inv.totalAmount,
                 "tax": inv.tax,
                 "discount": inv.discount,
@@ -839,6 +1093,8 @@ def invoice_summary(
                 "updatedAt": inv.updatedAt,
                 "reason": inv.reason,
                 "isDeleted": inv.isDeleted,
+
+                # ✅ Invoice items
                 "items": [
                     {
                         "description": i.description,
@@ -1081,6 +1337,32 @@ def startup():
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS males INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS females INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "documentUrl" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS name VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS mobile VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "checkInDate" DATE;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "checkInTime" TIME;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "checkOutDate" DATE;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "checkOutTime" TIME;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "customerGstNo" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "roomNo" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
+
+        # ✅ Add same fields to invoices table
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS name VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS mobile VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "checkInDate" DATE;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "checkInTime" TIME;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "checkOutDate" DATE;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "checkOutTime" TIME;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "customerGstNo" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "roomNo" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
         db.commit()
 
         # Seed users
