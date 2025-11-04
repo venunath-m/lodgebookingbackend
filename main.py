@@ -137,7 +137,7 @@ class RoomOut(BaseModel):
     price: float
     description: str
     imageUrl: str
-    class Config: orm_mode = True
+    class Config: from_attributes = True
 
 class RoomIn(BaseModel):
     name: str
@@ -155,7 +155,7 @@ class ServiceOut(BaseModel):
     id: int
     name: str
     price: float
-    class Config: orm_mode = True
+    class Config: from_attributes = True
 class ServiceCreate(BaseModel):
     name: str
     price: float    
@@ -171,8 +171,8 @@ class BookingServiceOut(BaseModel):
     service_date: date
     service_time: datetime
 
-    class Config:
-        orm_mode = True
+    class Config: from_attributes = True
+
 
 
 class BookingOut(BaseModel):
@@ -199,8 +199,8 @@ class BookingOut(BaseModel):
     documentUrl: Optional[str] = None
     services: List[BookingServiceOut] = []
 
-    class Config:
-        orm_mode = True
+    class Config: from_attributes = True
+
 
 class InvoiceItemIn(BaseModel):
     description: str
@@ -227,8 +227,7 @@ class InvoiceItemOut(BaseModel):
     quantity: int
     unitPrice: float
     subtotal: float
-    class Config:
-        orm_mode = True
+    class Config: from_attributes = True
 
 class InvoiceIn(BaseModel):
     bookingId: int
@@ -248,8 +247,8 @@ class InvoiceOut(BaseModel):
     updatedBy: Optional[int] = None
     updatedAt: Optional[datetime] = None
     reason: Optional[str] = None
-    class Config:
-        orm_mode = True        
+    class Config: from_attributes = True
+ 
 
 
 class Invoice(Base):
@@ -1362,6 +1361,7 @@ def startup():
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "customerGstNo" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "roomNo" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "roomName" VARCHAR;"""))  # 🆕 add this
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "gstNo" VARCHAR;""")) 
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
