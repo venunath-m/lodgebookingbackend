@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text,Column, Integer, String, Float, Date, ForeignKey, UniqueConstraint,DateTime
+from sqlalchemy import text,Column, Integer, String, Float, Date, Time,ForeignKey, UniqueConstraint,DateTime
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy import JSON
 from dotenv import load_dotenv
