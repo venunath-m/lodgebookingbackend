@@ -296,7 +296,7 @@ class Invoice(Base):
     numberOfDates = Column(Integer, default=0)
     totalNoPeople = Column(Integer, default=0)
     bookingNumber = Column(String, nullable=False)
-    InvoiceNumber = Column(String, nullable=False)
+    invoiceNumber = Column(String, nullable=False)
 
 
     totalAmount = Column(Float, default=0.0)
