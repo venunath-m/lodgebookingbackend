@@ -207,16 +207,14 @@ class BookingOut(BaseModel):
     paymentMethod: Optional[str] = None
     address: Optional[str] = None
     safe: Optional[bool] = None
-    bookingNumber = Column(String, nullable=False)
-
-
+    bookingNumber = Optional[str] = None #/* string*/
     room: RoomOut
     startDate: date
     endDate: date
     status: str
     males: int
     females: int
-    documentUrl: Optional[str] = None
+    documentUrl: Optional[str] = None #/* string*/
     services: List[BookingServiceOut] = []
 
     class Config: from_attributes = True
