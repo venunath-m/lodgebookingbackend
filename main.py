@@ -62,6 +62,19 @@ class Room(Base):
     imageUrl = Column(String, default="")
     status = Column(String, default="available")  # <-- new field
     bookings = relationship("Booking", back_populates="room")
+class CashClosing(Base):
+    __tablename__ = "cashclosing"
+
+    id = Column(Integer, primary_key=True, index=True)
+    userId = Column(Integer, ForeignKey("users.id"))
+    denominations = Column(String)
+    cashAmount = Column(Float)
+    onlineAmount = Column(Float)
+    upiAmount = Column(Float)
+    cardAmount = Column(Float)
+    systemAmount = Column(Float)
+    difference = Column(Float)
+    closingDate = Column(Date)
 
 class Booking(Base):
     __tablename__ = "bookings"
@@ -89,8 +102,11 @@ class Booking(Base):
     roomNo = Column(String, nullable=True)
     numberOfDates = Column(Integer, default=0)
     totalNoPeople = Column(Integer, default=0)
-    bookingSource = Column(String, nullable=True)
+    bookingSource = Column(String, nullable=False)
+    paymentMethod = Column(String, nullable=False)
+    address = Column(String, nullable=False)
     safe = Column(Boolean, default=False)
+    bookingNumber = Column(String, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="bookings")
@@ -188,7 +204,11 @@ class BookingOut(BaseModel):
     numberOfDates: Optional[int] = None
     totalNoPeople: Optional[int] = None
     bookingSource: Optional[str] = None
+    paymentMethod: Optional[str] = None
+    address: Optional[str] = None
     safe: Optional[bool] = None
+    bookingNumber = Column(String, nullable=False)
+
 
     room: RoomOut
     startDate: date
@@ -247,6 +267,8 @@ class InvoiceOut(BaseModel):
     updatedBy: Optional[int] = None
     updatedAt: Optional[datetime] = None
     reason: Optional[str] = None
+    bookingNumber: Optional[str] = None   
+    invoiceNumber: Optional[str] = None 
     class Config: from_attributes = True
  
 
@@ -266,10 +288,15 @@ class Invoice(Base):
     checkOutDate = Column(Date, nullable=True)
     checkOutTime = Column(Time, nullable=True)
     bookingSource = Column(String, nullable=True)
+    paymentMethod = Column(String, nullable=True)
+    address = Column(String, nullable=True)
     safe = Column(Boolean, default=False)
     gstNo = Column(String, nullable=True)
     numberOfDates = Column(Integer, default=0)
     totalNoPeople = Column(Integer, default=0)
+    bookingNumber = Column(String, nullable=False)
+    InvoiceNumber = Column(String, nullable=False)
+
 
     totalAmount = Column(Float, default=0.0)
     tax = Column(Float, default=0.0)
@@ -327,7 +354,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # local dev
         "https://lodge-booking-frontend.vercel.app",
-        "https://lodgebookingfrontend.onrender.com"# production vercel frontend
+        "https://lodgebookingfrontend.onrender.com",
+        "https://novaresidency.com",
+        "https://www.novaresidency.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -335,6 +364,19 @@ app.add_middleware(
 )
 
 # ---------- Auth helpers ----------
+def generate_booking_number(db: Session) -> str:
+    """Generate a sequential booking number like BK-00001"""
+    last_booking = db.query(Booking).order_by(Booking.id.desc()).first()
+    if last_booking and last_booking.bookingNumber:
+        # Extract numeric part and increment
+        try:
+            last_number = int(last_booking.bookingNumber.split("-")[1])
+            new_number = last_number + 1
+        except:
+            new_number = 1
+    else:
+        new_number = 1
+    return f"BK-{new_number:05d}"  # Pads with zeros, e.g., BK-00001
 def hash_password(p: str) -> str:
     return pwd_context.hash(p)
 
@@ -377,7 +419,7 @@ def get_uploaded_files():
         if os.path.isfile(os.path.join(UPLOADS_DIR, f)) and f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
     ]
     # Optional: add full URL
-    base_url = "https://lodgebookingbackend.onrender.com/uploads"  # replace with your actual URL
+    base_url = "https://api.novaresidency.com"  # replace with your actual URL
     images = [f"{base_url}/{f}" for f in images]
     return {"files": images}
 
@@ -409,7 +451,84 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     return TokenOut(access_token=token)
 
 # ---------- Business Endpoints (secured) ----------
+@app.post("/cashclosing")
+def save_cash_closing(data: dict, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    entry = CashClosing(
+        userId=user.id,
+        denominations=data["denominations"],
+        cashAmount=data["cashAmount"],
+        onlineAmount=data["onlineAmount"],
+        upiAmount=data["upiAmount"],
+        cardAmount=data["cardAmount"],
+        systemAmount=data["systemAmount"],
+        difference=data["difference"],
+        closingDate=date.today()
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
 
+
+
+@app.get("/cashclosing")
+def get_cash_report(dateFilter: str | None = None, page: int = 1, db: Session = Depends(get_db)):
+    query = db.query(CashClosing)
+    if dateFilter:
+        query = query.filter(CashClosing.closingDate == dateFilter)
+
+    page_size = 10
+    total = query.count()
+    data = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "totalPages": (total + page_size - 1) // page_size
+    }
+@app.get("/cashclosing/daily-report")
+def get_daily_payment_summary(dateFilter: str | None = None, db: Session = Depends(get_db)):
+    if not dateFilter:
+        dateFilter = str(date.today())
+
+    # Query totals based on paymentMethod field in bookings table
+    cash_total = db.query(func.sum(Booking.amount)).filter(
+        Booking.paymentMethod == "cash",
+        func.date(Booking.bookingDate) == dateFilter
+    ).scalar() or 0
+
+    upi_total = db.query(func.sum(Booking.amount)).filter(
+        Booking.paymentMethod == "upi",
+        func.date(Booking.bookingDate) == dateFilter
+    ).scalar() or 0
+
+    card_total = db.query(func.sum(Booking.amount)).filter(
+        Booking.paymentMethod == "card",
+        func.date(Booking.bookingDate) == dateFilter
+    ).scalar() or 0
+
+    online_total = db.query(func.sum(Booking.amount)).filter(
+        Booking.paymentMethod == "online",
+        func.date(Booking.bookingDate) == dateFilter
+    ).scalar() or 0
+
+    system_total = cash_total + upi_total + card_total + online_total
+
+    # Get last saved cash closing (optional)
+    last_close = db.query(CashClosing).filter(
+        CashClosing.closingDate == dateFilter
+    ).order_by(CashClosing.id.desc()).first()
+
+    return {
+        "date": dateFilter,
+        "cashTotal": cash_total,
+        "upiTotal": upi_total,
+        "cardTotal": card_total,
+        "onlineTotal": online_total,
+        "systemTotal": system_total,
+        "lastClosing": last_close
+    }    
 @app.get("/rooms", response_model=List[RoomOut])
 def list_rooms(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(Room).all()
@@ -502,7 +621,10 @@ def create_booking(
     numberOfDates: Optional[int] = Form(0),
     totalNoPeople: Optional[int] = Form(0),
     bookingSource: Optional[str] = Form(None),
+    paymentMethod: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
     safe: Optional[bool] = Form(False),
+    bookingNumber: Optional[str] = Form(None),
     document: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -521,6 +643,15 @@ def create_booking(
         with open(filepath, "wb") as f:
             f.write(document.file.read())
         document_url = f"/uploads/{filename}"
+
+    # Generate sequential booking number if not provided
+    if not bookingNumber:
+        bookingNumber = generate_booking_number(db)
+    else:
+        # Ensure uniqueness if provided manually
+        existing = db.query(Booking).filter(Booking.bookingNumber == bookingNumber).first()
+        if existing:
+            raise HTTPException(400, f"Booking number {bookingNumber} already exists.")
 
     booking = Booking(
         userId=current_user.id,
@@ -541,7 +672,10 @@ def create_booking(
         numberOfDates=numberOfDates,
         totalNoPeople=totalNoPeople,
         bookingSource=bookingSource,
-        safe=safe
+        paymentMethod=paymentMethod,
+        address=address,
+        safe=safe,
+        bookingNumber=bookingNumber
     )
     db.add(booking)
     db.commit()
@@ -568,7 +702,10 @@ def update_booking(
     numberOfDates: Optional[int] = Form(None),
     totalNoPeople: Optional[int] = Form(None),
     bookingSource: Optional[str] = Form(None),
+    paymentMethod: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
     safe: Optional[str] = Form(None),
+    bookingNumber: Optional[str] = Form(None),
     document: Optional[UploadFile] = File(None),
     current_user: "User" = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -577,20 +714,34 @@ def update_booking(
     if not booking or booking.userId != current_user.id:
         raise HTTPException(404, "Booking not found")
 
-    # Update fields
+    # Update numeric/date fields
     if roomId: booking.roomId = roomId
     if startDate: booking.startDate = startDate
     if endDate: booking.endDate = endDate
     if males is not None: booking.males = males
     if females is not None: booking.females = females
 
+    # Update other fields dynamically
     for field, value in locals().items():
         if field in [
             "name", "mobile", "checkInDate", "checkInTime", "checkOutDate", "checkOutTime",
-            "customerGstNo", "roomNo", "numberOfDates", "totalNoPeople", "bookingSource", "safe"
+            "customerGstNo", "roomNo", "numberOfDates", "totalNoPeople", "bookingSource",
+            "safe", "paymentMethod", "address"
         ] and value is not None:
             setattr(booking, field, value)
 
+    # Handle bookingNumber update safely
+    if bookingNumber:
+        # Check uniqueness
+        existing = db.query(Booking).filter(
+            Booking.bookingNumber == bookingNumber,
+            Booking.id != booking.id
+        ).first()
+        if existing:
+            raise HTTPException(400, f"Booking number {bookingNumber} already exists.")
+        booking.bookingNumber = bookingNumber
+
+    # Handle document upload
     if document:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         ext = os.path.splitext(document.filename)[1]
@@ -684,7 +835,11 @@ def create_invoice(
         checkOutDate=booking.checkOutDate,
         checkOutTime=booking.checkOutTime,
         bookingSource=booking.bookingSource,
+        paymentMethod=booking.paymentMethod,
+        address=booking.address,
         safe=booking.safe,
+        bookingNumber=booking.bookingNumber,   
+        invoiceNumber=f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{booking.id}",     
         gstNo=booking.customerGstNo,
         numberOfDates=booking.numberOfDates,
         totalNoPeople=booking.totalNoPeople
@@ -716,7 +871,11 @@ def create_invoice(
         "checkInTime": invoice.checkInTime,
         "checkOutTime": invoice.checkOutTime,
         "bookingSource": invoice.bookingSource,
+        "paymentMethod": invoice.paymentMethod,
+        "address": invoice.address,
         "safe": invoice.safe,
+        "bookingNumber": invoice.bookingNumber,
+        "invoiceNumber": invoice.InvoiceNumber,
         "gstNo": invoice.gstNo,
         "numberOfDates": invoice.numberOfDates,
         "totalNoPeople": invoice.totalNoPeople,
@@ -788,7 +947,11 @@ def update_invoice(
         invoice.checkOutDate = booking.checkOutDate
         invoice.checkOutTime = booking.checkOutTime
         invoice.bookingSource = booking.bookingSource
+        invoice.paymentMedthod = booking.paymentMedthod
+        invoice.address = booking.address
         invoice.safe = booking.safe
+        invoice.bookingNumber = booking.bookingNumber
+        invoice.invoiceNumber = invoice.InvoiceNumber
         invoice.gstNo = booking.customerGstNo
         invoice.numberOfDates = booking.numberOfDates
         invoice.totalNoPeople = booking.totalNoPeople
@@ -820,7 +983,10 @@ def update_invoice(
         "checkInTime": invoice.checkInTime,
         "checkOutTime": invoice.checkOutTime,
         "bookingSource": invoice.bookingSource,
+        "paymentMethod": invoice.paymentMethod,
         "safe": invoice.safe,
+        "bookingNumber": invoice.bookingNumber,
+        "invoiceNumber": invoice.InvoiceNumber,
         "gstNo": invoice.gstNo,
         "numberOfDates": invoice.numberOfDates,
         "totalNoPeople": invoice.totalNoPeople,
@@ -869,7 +1035,11 @@ def list_invoices(include_deleted: bool = False, db: Session = Depends(get_db), 
             "checkInTime": inv.booking.checkInTime if inv.booking else None,
             "checkOutTime": inv.booking.checkOutTime if inv.booking else None,
             "bookingSource": inv.booking.bookingSource if inv.booking else None,
+            "paymentMethod": inv.booking.paymentMethod if inv.booking else None,
+            "address": inv.booking.address if inv.booking else None,
             "safe": inv.booking.safe if inv.booking else None,
+            "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
+            "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
             "gstNo": inv.booking.customerGstNo if inv.booking else None,
             "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
             "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
@@ -905,7 +1075,18 @@ def delete_invoice(invoice_id: int, reason: str = Form(...), current_user: User 
     db.commit()
     return {"ok": True, "invoiceId": invoice.id}
 
+@app.get("/invoices/next-number")
+def get_next_invoice_number(booking_id: int = Query(None)):
+    """
+    Generate the next invoice number for frontend display.
+    If booking_id is provided, it will be included in the number.
+    """
+    # Use booking ID or placeholder
+    booking_part = booking_id if booking_id else "0000"
 
+    # Format: INV-YYYYMMDDHHMMSS-<bookingId>
+    invoice_number = f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{booking_part}"
+    return {"invoiceNumber": invoice_number}
 
 @app.get("/reports/invoices")
 def invoice_report(
@@ -966,7 +1147,24 @@ def invoice_report(
             "updatedAt": inv.updatedAt,
             "reason": inv.reason,
             "isDeleted": inv.isDeleted,
-            "items": items
+            "items": items,
+            "customerName": inv.booking.name if inv.booking else None,
+        "mobile": inv.booking.mobile if inv.booking else None,
+        "roomNo": inv.booking.roomNo if inv.booking else None,
+        "checkInDate": inv.booking.checkInDate if inv.booking else None,
+        "checkOutDate": inv.booking.checkOutDate if inv.booking else None,
+        "checkInTime": inv.booking.checkInTime if inv.booking else None,
+        "checkOutTime": inv.booking.checkOutTime if inv.booking else None,
+        "bookingSource": inv.booking.bookingSource if inv.booking else None,
+        "paymentMethod": inv.booking.paymentMethod if inv.booking else None,
+        "address": inv.booking.address if inv.booking else None,
+        "safe": inv.booking.safe if inv.booking else None,
+        "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
+        "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
+        "gstNo": inv.booking.customerGstNo if inv.booking else None,
+        "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
+        "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
+        "room": inv.booking.room.name if inv.booking and inv.booking.room else None,
         })
 
     return {
@@ -1078,7 +1276,11 @@ def invoice_summary(
                 "checkInTime": inv.booking.checkInTime if inv.booking else None,
                 "checkOutTime": inv.booking.checkOutTime if inv.booking else None,
                 "bookingSource": inv.booking.bookingSource if inv.booking else None,
+                "paymentMethod": inv.booking.paymentMethod if inv.booking else None,
+                "address": inv.booking.address if inv.booking else None,
                 "safe": inv.booking.safe if inv.booking else None,
+                "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
+                "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
                 "gstNo": inv.booking.customerGstNo if inv.booking else None,
                 "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
                 "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
@@ -1347,7 +1549,11 @@ def startup():
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "address" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "paymentMethod" VARCHAR;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
+        
 
         # ✅ Add same fields to invoices table       
         # ✅ Add same fields to invoices table
@@ -1365,7 +1571,11 @@ def startup():
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "numberOfDates" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "paymentMethod" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "address" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "invoiceNumber" VARCHAR;"""))
         db.commit()
 
         # Seed users
