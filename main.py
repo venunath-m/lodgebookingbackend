@@ -207,17 +207,20 @@ class BookingOut(BaseModel):
     paymentMethod: Optional[str] = None
     address: Optional[str] = None
     safe: Optional[bool] = None
-    bookingNumber = str #/* string*/
+    bookingNumber: str  # ✅ fixed
+
     room: RoomOut
     startDate: date
     endDate: date
     status: str
     males: int
     females: int
-    documentUrl: Optional[str] = None #/* string*/
+    documentUrl: Optional[str] = None
     services: List[BookingServiceOut] = []
 
-    class Config: from_attributes = True
+    model_config = {
+        "from_attributes": True  # ✅ Pydantic v2 replacement for orm_mode
+    }
 
 
 class InvoiceItemIn(BaseModel):
