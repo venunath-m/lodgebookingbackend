@@ -207,7 +207,7 @@ class BookingOut(BaseModel):
     paymentMethod: Optional[str] = None
     address: Optional[str] = None
     safe: Optional[bool] = None
-    bookingNumber = Optional[str] = None #/* string*/
+    bookingNumber = str #/* string*/
     room: RoomOut
     startDate: date
     endDate: date
