@@ -1573,7 +1573,7 @@ def startup():
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "totalNoPeople" INT DEFAULT 0;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingSource" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "paymentMethod" VARCHAR;"""))
-        db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "address" VARCHAR;"""))
+        db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "address" VARCHAR;""")) 
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "invoiceNumber" VARCHAR;"""))
