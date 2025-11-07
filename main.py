@@ -771,12 +771,12 @@ def cancel_booking(
     db.refresh(booking)
     return booking
 
-@app.get("/bookings/me")
+@app.get("/bookings/me", response_model=List[BookingOut])
 def my_bookings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    from_date: Optional[date] = Query(None),
-    to_date: Optional[date] = Query(None),
+    from_date: date | None = Query(None),
+    to_date: date | None = Query(None),
 ):
     q = db.query(Booking).filter(Booking.userId == current_user.id)
 
@@ -786,10 +786,7 @@ def my_bookings(
         q = q.filter(Booking.endDate <= to_date)
 
     bookings = q.order_by(Booking.startDate.desc()).all()
-
-    return {
-        "items": bookings
-    }
+    return bookings
 # ---------- Service Management ----------
 @app.post("/invoices", response_model=dict)
 def create_invoice(
