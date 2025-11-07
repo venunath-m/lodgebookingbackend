@@ -1592,7 +1592,8 @@ def startup():
                             FROM numbered
                             WHERE bookings.id = numbered.id;
                         """))
-
+        db.execute(text("""UPDATE bookings SET "bookingNumber" = 'BK-000002' WHERE "bookingNumber" = 'BK-00002';"""))  
+        db.execute(text("""UPDATE bookings SET "bookingNumber" = 'BK-000001' WHERE "bookingNumber" = 'BK-00001';"""))  
 
         
 
