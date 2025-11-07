@@ -796,16 +796,25 @@ def my_bookings(
     return bookings
 @app.get("/bookings/next-number")
 def get_next_booking_number(db: Session = Depends(get_db)):
-    last_booking = db.query(Booking).order_by(Booking.id.desc()).first()
+    # Extract numeric part and order by it
+    last_booking = (
+        db.query(Booking)
+        .filter(Booking.bookingNumber.isnot(None))
+        .order_by(
+            db.cast(db.func.substr(Booking.bookingNumber, 4), db.Integer).desc()
+        )
+        .first()
+    )
 
     if last_booking and last_booking.bookingNumber:
         prefix, num = last_booking.bookingNumber.split("-")
-        next_num = str(int(num) + 1).zfill(6)   # <-- Always make 6 digits
+        next_num = str(int(num) + 1).zfill(6)  # Always 6 digits
         next_number = f"{prefix}-{next_num}"
     else:
         next_number = "BK-000001"
 
     return {"nextBookingNumber": next_number}
+
 
 # ---------- Service Management ----------
 @app.post("/invoices", response_model=dict)
