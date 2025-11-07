@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text,Column, Integer, String, Float, Date, Time,ForeignKey, UniqueConstraint,DateTime
+from sqlalchemy import func,cast,text,Column, Integer, String, Float, Date, Time,ForeignKey, UniqueConstraint,DateTime
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy import JSON
 from dotenv import load_dotenv
@@ -23,7 +23,6 @@ from fastapi import Query
 from fastapi.responses import JSONResponse
 from datetime import datetime, date
 from sqlalchemy import Boolean
-from sqlalchemy import func
 from accounting.routes import router as accounting_router
 # ---------- Config ----------
 load_dotenv()
@@ -796,22 +795,23 @@ def my_bookings(
     return bookings
 @app.get("/bookings/next-number")
 def get_next_booking_number(db: Session = Depends(get_db)):
-    # Extract numeric part and order by it
+
+    # Get the last booking ordered by numeric part of bookingNumber
     last_booking = (
         db.query(Booking)
         .filter(Booking.bookingNumber.isnot(None))
         .order_by(
-            db.cast(db.func.substr(Booking.bookingNumber, 4), db.Integer).desc()
+            cast(func.substr(Booking.bookingNumber, 4), Integer).desc()
         )
         .first()
     )
 
     if last_booking and last_booking.bookingNumber:
         prefix, num = last_booking.bookingNumber.split("-")
-        next_num = str(int(num) + 1).zfill(6)  # Always 6 digits
+        next_num = str(int(num) + 1).zfill(len(num))  # preserves number length
         next_number = f"{prefix}-{next_num}"
     else:
-        next_number = "BK-000001"
+        next_number = "BK-000001"  # First booking default
 
     return {"nextBookingNumber": next_number}
 
