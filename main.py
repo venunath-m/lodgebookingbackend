@@ -207,7 +207,7 @@ class BookingOut(BaseModel):
     paymentMethod: Optional[str] = None
     address: Optional[str] = None
     safe: Optional[bool] = None
-    bookingNumber: str  # ✅ fixed
+    bookingNumber: Optional[str] = None
 
     room: RoomOut
     startDate: date
@@ -787,6 +787,20 @@ def my_bookings(
 
     bookings = q.order_by(Booking.startDate.desc()).all()
     return bookings
+@app.get("/bookings/next-number")
+def get_next_booking_number(db: Session = Depends(get_db)):
+    last_booking = db.query(Booking).order_by(Booking.id.desc()).first()
+    
+    if last_booking and last_booking.bookingNumber:
+        # Example format like BK-000123 → increment
+        prefix, num = last_booking.bookingNumber.split("-")
+        next_num = str(int(num) + 1).zfill(len(num))
+        next_number = f"{prefix}-{next_num}"
+    else:
+        next_number = "BK-000001"  # First booking default
+
+    return {"nextBookingNumber": next_number}
+
 # ---------- Service Management ----------
 @app.post("/invoices", response_model=dict)
 def create_invoice(
@@ -873,7 +887,7 @@ def create_invoice(
         "address": invoice.address,
         "safe": invoice.safe,
         "bookingNumber": invoice.bookingNumber,
-        "invoiceNumber": invoice.InvoiceNumber,
+        "invoiceNumber": invoice.invoiceNumber,
         "gstNo": invoice.gstNo,
         "numberOfDates": invoice.numberOfDates,
         "totalNoPeople": invoice.totalNoPeople,
@@ -949,7 +963,7 @@ def update_invoice(
         invoice.address = booking.address
         invoice.safe = booking.safe
         invoice.bookingNumber = booking.bookingNumber
-        invoice.invoiceNumber = invoice.InvoiceNumber
+        invoice.invoiceNumber = invoice.invoiceNumber
         invoice.gstNo = booking.customerGstNo
         invoice.numberOfDates = booking.numberOfDates
         invoice.totalNoPeople = booking.totalNoPeople
@@ -984,7 +998,7 @@ def update_invoice(
         "paymentMethod": invoice.paymentMethod,
         "safe": invoice.safe,
         "bookingNumber": invoice.bookingNumber,
-        "invoiceNumber": invoice.InvoiceNumber,
+        "invoiceNumber": invoice.invoiceNumber,
         "gstNo": invoice.gstNo,
         "numberOfDates": invoice.numberOfDates,
         "totalNoPeople": invoice.totalNoPeople,
@@ -1037,7 +1051,7 @@ def list_invoices(include_deleted: bool = False, db: Session = Depends(get_db), 
             "address": inv.booking.address if inv.booking else None,
             "safe": inv.booking.safe if inv.booking else None,
             "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
-            "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
+            "invoiceNumber": inv.invoiceNumber if inv.booking else None,
             "gstNo": inv.booking.customerGstNo if inv.booking else None,
             "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
             "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
@@ -1158,7 +1172,7 @@ def invoice_report(
         "address": inv.booking.address if inv.booking else None,
         "safe": inv.booking.safe if inv.booking else None,
         "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
-        "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
+        "invoiceNumber": inv.invoiceNumber if inv.booking else None,
         "gstNo": inv.booking.customerGstNo if inv.booking else None,
         "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
         "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
@@ -1278,7 +1292,7 @@ def invoice_summary(
                 "address": inv.booking.address if inv.booking else None,
                 "safe": inv.booking.safe if inv.booking else None,
                 "bookingNumber": inv.booking.bookingNumber if inv.booking else None,
-                "invoiceNumber": inv.InvoiceNumber if inv.booking else None,
+                "invoiceNumber": inv.invoiceNumber if inv.booking else None,
                 "gstNo": inv.booking.customerGstNo if inv.booking else None,
                 "numberOfDates": inv.booking.numberOfDates if inv.booking else None,
                 "totalNoPeople": inv.booking.totalNoPeople if inv.booking else None,
@@ -1551,6 +1565,13 @@ def startup():
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "paymentMethod" VARCHAR;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
+        db.execute(text("""WITH numbered AS (SELECT id,ROW_NUMBER() OVER (ORDER BY id) AS rn FROM bookings
+                        WHERE bookingNumber IS NULL)
+                        UPDATE bookings SET bookingNumber = CONCAT('BK-', LPAD(numbered.rn::text, 6, '0'))
+                            FROM numbered
+                            WHERE bookings.id = numbered.id;
+                        """))
+
         
 
         # ✅ Add same fields to invoices table       
