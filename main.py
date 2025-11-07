@@ -1565,12 +1565,19 @@ def startup():
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "paymentMethod" VARCHAR;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
         db.execute(text("""ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
-        db.execute(text("""WITH numbered AS (SELECT id,ROW_NUMBER() OVER (ORDER BY id) AS rn FROM bookings
-                        WHERE bookingNumber IS NULL)
-                        UPDATE bookings SET bookingNumber = CONCAT('BK-', LPAD(numbered.rn::text, 6, '0'))
+        db.execute(text("""
+                            WITH numbered AS (
+                                SELECT id,
+                                    ROW_NUMBER() OVER (ORDER BY id) AS rn
+                                FROM bookings
+                                WHERE "bookingNumber" IS NULL
+                            )
+                            UPDATE bookings
+                            SET "bookingNumber" = CONCAT('BK-', LPAD(numbered.rn::text, 6, '0'))
                             FROM numbered
                             WHERE bookings.id = numbered.id;
                         """))
+
 
         
 
