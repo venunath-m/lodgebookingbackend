@@ -66,7 +66,7 @@ class CashClosing(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     userId = Column(Integer, ForeignKey("users.id"))
-    denominations = Column(String)
+    denominations = Column(JSON) 
     cashAmount = Column(Float)
     onlineAmount = Column(Float)
     upiAmount = Column(Float)
@@ -1585,6 +1585,7 @@ def startup():
 
         # ✅ Add same fields to invoices table       
         # ✅ Add same fields to invoices table
+        db.execute(text("""ALTER TABLE cashclosing ALTER COLUMN denominations TYPE JSONB USING denominations::JSONB;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "customerName" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS name VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS mobile VARCHAR;"""))
