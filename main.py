@@ -403,7 +403,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if not user:
         raise credentials_exception
     return user
-
+def get_next_invoice_number(db: Session):
+    last_id = db.execute(text("SELECT MAX(id) FROM invoices")).scalar()
+    next_id = (last_id or 0) + 1
+    return f"INV-{next_id:06d}"
 def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
@@ -842,9 +845,13 @@ def create_invoice(
 
     final_amount = total_amount + payload.tax - payload.discount
 
-    # ✅ Create invoice with snapshot of booking details
+    # ✅ Get the next invoice number (Auto-Increment Format)
+    next_invoice_number = get_next_invoice_number(db)
+
+    # ✅ Create invoice with snapshot
     invoice = Invoice(
         bookingId=payload.bookingId,
+        invoiceNumber=next_invoice_number,   # <--- ✅ USE NEW NUMBER
         totalAmount=total_amount,
         tax=payload.tax,
         discount=payload.discount,
@@ -852,7 +859,6 @@ def create_invoice(
         createdBy=current_user.id,
         items=invoice_items,
 
-        # Snapshot booking details
         customerName=booking.name,
         mobile=booking.mobile,
         roomNo=booking.roomNo,
@@ -865,8 +871,7 @@ def create_invoice(
         paymentMethod=booking.paymentMethod,
         address=booking.address,
         safe=booking.safe,
-        bookingNumber=booking.bookingNumber,   
-        invoiceNumber=f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{booking.id}",     
+        bookingNumber=booking.bookingNumber,
         gstNo=booking.customerGstNo,
         numberOfDates=booking.numberOfDates,
         totalNoPeople=booking.totalNoPeople
@@ -876,38 +881,13 @@ def create_invoice(
     db.commit()
     db.refresh(invoice)
 
-    # ✅ Return full response
     return {
         "invoiceId": invoice.id,
-        "bookingId": invoice.bookingId,
-        "user": current_user.id,
-        "totalAmount": invoice.totalAmount,
-        "tax": invoice.tax,
-        "discount": invoice.discount,
+        "invoiceNumber": invoice.invoiceNumber,  # ✅ Return new number
         "finalAmount": invoice.finalAmount,
         "createdAt": invoice.createdAt,
-        "updatedAt": invoice.updatedAt,
-
-        # Booking snapshot
         "customerName": invoice.customerName,
-        "mobile": invoice.mobile,
-        "roomNo": invoice.roomNo,
         "room": invoice.roomName,
-        "checkInDate": invoice.checkInDate,
-        "checkOutDate": invoice.checkOutDate,
-        "checkInTime": invoice.checkInTime,
-        "checkOutTime": invoice.checkOutTime,
-        "bookingSource": invoice.bookingSource,
-        "paymentMethod": invoice.paymentMethod,
-        "address": invoice.address,
-        "safe": invoice.safe,
-        "bookingNumber": invoice.bookingNumber,
-        "invoiceNumber": invoice.invoiceNumber,
-        "gstNo": invoice.gstNo,
-        "numberOfDates": invoice.numberOfDates,
-        "totalNoPeople": invoice.totalNoPeople,
-
-        # Invoice items
         "items": [
             {
                 "description": i.description,
@@ -1103,16 +1083,14 @@ def delete_invoice(invoice_id: int, reason: str = Form(...), current_user: User 
     return {"ok": True, "invoiceId": invoice.id}
 
 @app.get("/invoices/next-number")
-def get_next_invoice_number(booking_id: int = Query(None)):
-    """
-    Generate the next invoice number for frontend display.
-    If booking_id is provided, it will be included in the number.
-    """
-    # Use booking ID or placeholder
-    booking_part = booking_id if booking_id else "0000"
+def get_next_invoice_number(db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT MAX(id) FROM invoices
+    """)).scalar()
 
-    # Format: INV-YYYYMMDDHHMMSS-<bookingId>
-    invoice_number = f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{booking_part}"
+    next_id = (result or 0) + 1
+
+    invoice_number = f"INV-{next_id:06d}"
     return {"invoiceNumber": invoice_number}
 
 @app.get("/reports/invoices")
@@ -1618,6 +1596,12 @@ def startup():
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS safe BOOLEAN DEFAULT FALSE;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "bookingNumber" VARCHAR;"""))
         db.execute(text("""ALTER TABLE invoices ADD COLUMN IF NOT EXISTS "invoiceNumber" VARCHAR;"""))
+        db.execute(text("""
+                        UPDATE invoices
+                        SET "invoiceNumber" = CONCAT('INV-', LPAD(id::text, 6, '0'))
+                        WHERE "invoiceNumber" IS NULL OR "invoiceNumber" = '';
+                        """))
+
         db.commit()
 
         # Seed users
