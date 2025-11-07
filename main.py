@@ -456,7 +456,11 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     return {
         "access_token": token,
         "token_type": "bearer",
-        "role": user.role     # ✅ send role to frontend
+        "role": user.role,
+        "user": {        
+        "name": user.name,
+        "email": user.email
+                }# ✅ send role to frontend
     }
 
 
