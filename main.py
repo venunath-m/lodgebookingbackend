@@ -797,14 +797,13 @@ def my_bookings(
 @app.get("/bookings/next-number")
 def get_next_booking_number(db: Session = Depends(get_db)):
     last_booking = db.query(Booking).order_by(Booking.id.desc()).first()
-    
+
     if last_booking and last_booking.bookingNumber:
-        # Example format like BK-000123 → increment
         prefix, num = last_booking.bookingNumber.split("-")
-        next_num = str(int(num) + 1).zfill(len(num))
+        next_num = str(int(num) + 1).zfill(6)   # <-- Always make 6 digits
         next_number = f"{prefix}-{next_num}"
     else:
-        next_number = "BK-000001"  # First booking default
+        next_number = "BK-000001"
 
     return {"nextBookingNumber": next_number}
 
