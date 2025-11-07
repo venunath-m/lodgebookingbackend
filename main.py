@@ -443,13 +443,20 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
 
 
 
-@app.post("/auth/login", response_model=TokenOut)
+@app.post("/auth/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    
     token = create_access_token({"sub": str(user.id), "role": user.role})
-    return TokenOut(access_token=token)
+    
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": user.role     # ✅ send role to frontend
+    }
+
 
 # ---------- Business Endpoints (secured) ----------
 @app.post("/cashclosing")
