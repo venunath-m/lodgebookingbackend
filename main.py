@@ -510,30 +510,30 @@ def get_daily_payment_summary(dateFilter: str | None = None, db: Session = Depen
     if not dateFilter:
         dateFilter = str(date.today())
 
-    # Query totals based on paymentMethod field in bookings table
-    cash_total = db.query(func.sum(Booking.amount)).filter(
-        Booking.paymentMethod == "cash",
-        func.date(Booking.bookingDate) == dateFilter
+    # Query totals from Invoice table
+    cash_total = db.query(func.sum(Invoice.finalAmount)).filter(
+        Invoice.paymentMethod == "cash",
+        func.date(Invoice.createdAt) == dateFilter
     ).scalar() or 0
 
-    upi_total = db.query(func.sum(Booking.amount)).filter(
-        Booking.paymentMethod == "upi",
-        func.date(Booking.bookingDate) == dateFilter
+    upi_total = db.query(func.sum(Invoice.finalAmount)).filter(
+        Invoice.paymentMethod == "upi",
+        func.date(Invoice.createdAt) == dateFilter
     ).scalar() or 0
 
-    card_total = db.query(func.sum(Booking.amount)).filter(
-        Booking.paymentMethod == "card",
-        func.date(Booking.bookingDate) == dateFilter
+    card_total = db.query(func.sum(Invoice.finalAmount)).filter(
+        Invoice.paymentMethod == "card",
+        func.date(Invoice.createdAt) == dateFilter
     ).scalar() or 0
 
-    online_total = db.query(func.sum(Booking.amount)).filter(
-        Booking.paymentMethod == "online",
-        func.date(Booking.bookingDate) == dateFilter
+    online_total = db.query(func.sum(Invoice.finalAmount)).filter(
+        Invoice.paymentMethod == "online",
+        func.date(Invoice.createdAt) == dateFilter
     ).scalar() or 0
 
     system_total = cash_total + upi_total + card_total + online_total
 
-    # Get last saved cash closing (optional)
+    # Last saved cash closing (optional)
     last_close = db.query(CashClosing).filter(
         CashClosing.closingDate == dateFilter
     ).order_by(CashClosing.id.desc()).first()
@@ -546,7 +546,8 @@ def get_daily_payment_summary(dateFilter: str | None = None, db: Session = Depen
         "onlineTotal": online_total,
         "systemTotal": system_total,
         "lastClosing": last_close
-    }    
+    }
+
 @app.get("/rooms", response_model=List[RoomOut])
 def list_rooms(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(Room).all()
