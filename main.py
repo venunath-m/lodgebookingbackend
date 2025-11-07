@@ -468,6 +468,10 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 # ---------- Business Endpoints (secured) ----------
 @app.post("/cashclosing")
 def save_cash_closing(data: dict, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    # Parse date from frontend, fallback to today
+    closing_date_str = data.get("closingDate")
+    closing_date = datetime.strptime(closing_date_str, "%Y-%m-%d").date() if closing_date_str else date.today()
+
     entry = CashClosing(
         userId=user.id,
         denominations=data["denominations"],
@@ -477,13 +481,12 @@ def save_cash_closing(data: dict, db: Session = Depends(get_db), user = Depends(
         cardAmount=data["cardAmount"],
         systemAmount=data["systemAmount"],
         difference=data["difference"],
-        closingDate=date.today()
+        closingDate=closing_date
     )
     db.add(entry)
     db.commit()
     db.refresh(entry)
     return entry
-
 
 
 @app.get("/cashclosing")
